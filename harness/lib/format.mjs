@@ -1,0 +1,59 @@
+import { taskMarker } from './queue.mjs';
+
+function checkTable(checks) {
+  const rows = Object.entries(checks ?? {}).map(([name, c]) => {
+    const result = c.ok ? 'PASS' : c.timedOut ? 'TIMEOUT' : `FAIL (exit ${c.exitCode})`;
+    return `| ${name} | ${result} |`;
+  });
+  return ['| Check | Result |', '|---|---|', ...rows].join('\n');
+}
+
+const bullets = (items) => items.map((x) => `- ${x}`).join('\n');
+
+export function renderPrBody(v) {
+  const r = v.report;
+  return [
+    taskMarker({ plan: v.plan, task: v.task, issue: v.issue }),
+    `Closes #${v.issue}`,
+    '',
+    `**Task ${v.task}: ${v.taskTitle}** — \`${v.plan}\``,
+    `Base: \`${v.baseBranch}\` · Model: \`${v.model}\` · Commits: ${v.commits}`,
+    '',
+    '## Summary',
+    r.summary,
+    '',
+    '## Checks (run by the harness)',
+    checkTable(v.checks),
+    ...(v.warnings.length ? ['', '## Warnings', bullets(v.warnings)] : []),
+    '',
+    '## Self-review',
+    r.selfReview,
+    '',
+    '## Known issues',
+    r.knownIssues,
+    '',
+    '<details><summary>Agent report</summary>',
+    '',
+    '~~~',
+    (v.reportText ?? '').trim(),
+    '~~~',
+    '',
+    '</details>',
+  ].join('\n');
+}
+
+export function renderComment(v, { runUrl, prUrl } = {}) {
+  if (v.outcome === 'READY_FOR_QA') {
+    return `✅ **READY_FOR_QA** — ${prUrl ?? 'PR opened'}\n\n[Run log and artifacts](${runUrl})`;
+  }
+  const lines = [`⛔ **BLOCKED** (${v.kind})`, '', bullets(v.reasons)];
+  const r = v.report;
+  if (r?.status === 'BLOCKED') {
+    lines.push('', '**Evidence**', '~~~', r.evidence, '~~~', '', '**Required human action**', r.requiredHumanAction);
+  }
+  if (v.checks && Object.keys(v.checks).length) lines.push('', checkTable(v.checks));
+  if (v.warnings?.length) lines.push('', '**Warnings**', bullets(v.warnings));
+  if (v.commits > 0) lines.push('', `The attempt was pushed to \`${v.branch}\` for inspection.`);
+  lines.push('', `[Run log and artifacts](${runUrl})`, '', 'To retry: remove `agent:blocked` and add `agent`.');
+  return lines.join('\n');
+}
