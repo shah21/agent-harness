@@ -1,0 +1,9 @@
+{
+  "install": "pnpm install --frozen-lockfile",
+  "checks": {
+    "test": "pnpm test",
+    "lint": "pnpm lint",
+    "typecheck": "pnpm exec tsc --noEmit",
+    "build": "pnpm build"
+  }
+}
