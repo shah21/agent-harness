@@ -9,13 +9,15 @@ export function agentEnv(source, extra) {
   return { ...env, ...extra };
 }
 
-export function agentCommand({ model, maxTurns, promptText, override }) {
+// addDir lets the agent write its report outside the project checkout.
+export function agentCommand({ model, maxTurns, promptText, addDir, override }) {
   if (override) return ['sh', '-c', override];
   return [
     'claude', '-p', promptText,
     '--model', model,
     '--max-turns', String(maxTurns),
     '--allowedTools', ALLOWED_TOOLS,
+    '--add-dir', addDir,
     '--output-format', 'stream-json',
     '--verbose',
   ];

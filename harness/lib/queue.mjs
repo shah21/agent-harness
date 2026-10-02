@@ -40,7 +40,10 @@ export function selectNext({ issues, prs, defaultBranch }) {
     return { issue, plan, task, base: defaultBranch, skip: `upstream task ${upstream.ref.task} blocked (#${upstream.number})` };
   }
 
+  // Only the harness's own same-repo branches may become a base: anyone can
+  // open a PR carrying a marker, and the base name reaches shell steps.
   const parent = prs
+    .filter((p) => !p.isCrossRepository && /^agent\/issue-\d+$/.test(p.headRefName))
     .map((p) => ({ head: p.headRefName, marker: parseTaskMarker(p.body) }))
     .filter((p) => p.marker && p.marker.plan === plan && p.marker.task < task)
     .sort((a, b) => b.marker.task - a.marker.task)[0];

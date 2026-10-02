@@ -40,7 +40,7 @@ export function parseReport(text) {
 
   const checks = {};
   for (const item of listItems('CHECKS')) {
-    const m = /^([a-z][a-z0-9_-]*):\s*(PASS|FAIL|NOT_RUN)$/.exec(item);
+    const m = /^([a-z][a-z0-9_-]*):\s*(PASS|FAIL|NOT_RUN)\b/.exec(item);
     if (!m) return { ok: false, errors: [`unreadable CHECKS line: "- ${item}"`] };
     checks[m[1]] = m[2];
   }

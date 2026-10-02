@@ -71,3 +71,12 @@ test('task marker round trip', () => {
   assert.deepEqual(parseTaskMarker(`text\n${taskMarker({ plan: 'a.md', task: 4, issue: 9 })}`), { plan: 'a.md', task: 4, issue: 9 });
   assert.equal(parseTaskMarker('nothing'), null);
 });
+
+test('only same-repo agent/issue-<n> PRs can be stacking parents', () => {
+  const prs = [
+    pr('feature/evil$(id)', 'docs/p.md', 2, 2),
+    { ...pr('agent/issue-1', 'docs/p.md', 1, 1), isCrossRepository: true },
+    pr('agent/issue-5', 'docs/p.md', 1, 5),
+  ];
+  assert.equal(select([issue(3, 3, ['agent'])], prs).base, 'agent/issue-5');
+});
