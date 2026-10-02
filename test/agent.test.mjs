@@ -13,9 +13,10 @@ test('agentEnv keeps only allowlisted variables plus extras', () => {
 
 test('agentCommand builds the claude invocation', () => {
   assert.equal(ALLOWED_TOOLS, 'Read,Edit,Write,Glob,Grep,Bash');
-  assert.deepEqual(agentCommand({ model: 'sonnet', maxTurns: 150, promptText: 'do it' }), [
+  assert.deepEqual(agentCommand({ model: 'sonnet', maxTurns: 150, promptText: 'do it', addDir: '/out' }), [
     'claude', '-p', 'do it', '--model', 'sonnet', '--max-turns', '150',
-    '--allowedTools', 'Read,Edit,Write,Glob,Grep,Bash', '--output-format', 'stream-json', '--verbose',
+    '--allowedTools', 'Read,Edit,Write,Glob,Grep,Bash', '--add-dir', '/out',
+    '--output-format', 'stream-json', '--verbose',
   ]);
 });
 

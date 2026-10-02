@@ -48,7 +48,10 @@ export async function runTask({ projectDir, issue, outDir, baseBranch, env = pro
   const logsDir = join(outDir, 'logs');
   mkdirSync(logsDir, { recursive: true });
   const reportPath = join(outDir, 'report.md');
+  const verdictPath = join(outDir, 'verdict.json');
+  // A verdict from an earlier run (or one the agent plants) must never be published.
   rmSync(reportPath, { force: true });
+  rmSync(verdictPath, { force: true });
 
   const meta = {
     issue: issue.number, issueTitle: issue.title, baseBranch, branch: `agent/issue-${issue.number}`,
@@ -56,9 +59,28 @@ export async function runTask({ projectDir, issue, outDir, baseBranch, env = pro
   };
   const finish = (result) => {
     const verdict = { ...meta, ...result };
-    writeFileSync(join(outDir, 'verdict.json'), JSON.stringify(verdict, null, 2));
+    writeFileSync(verdictPath, JSON.stringify(verdict, null, 2));
     return verdict;
   };
+  const state = { agentRan: false, baseSha: null };
+
+  try {
+    return await execute({ projectDir, issue, outDir, logsDir, reportPath, env, meta, finish, state });
+  } catch (e) {
+    // The agent can leave the repository in any state; a crash here must still
+    // produce a BLOCKED verdict rather than no verdict at all.
+    let commits = 0;
+    try {
+      if (state.baseSha) commits = Number(git(projectDir, 'rev-list', '--count', `${state.baseSha}..${meta.branch}`));
+    } catch {
+      // repository unreadable
+    }
+    const where = state.agentRan ? 'harness failed after the agent ran' : 'harness error';
+    return finish({ ...blocked('harness', `${where}: ${String(e.message).split('\n')[0]}`), commits });
+  }
+}
+
+async function execute({ projectDir, issue, outDir, logsDir, reportPath, env, meta, finish, state }) {
   // Install and checks run project code: give them no tokens at all.
   const quietEnv = agentEnv(env, {});
   delete quietEnv.CLAUDE_CODE_OAUTH_TOKEN;
@@ -86,11 +108,15 @@ export async function runTask({ projectDir, issue, outDir, baseBranch, env = pro
   git(projectDir, 'config', 'user.name', 'agent-harness');
   git(projectDir, 'config', 'user.email', 'agent-harness@users.noreply.github.com');
 
-  const install = await runWithTimeout(config.install, {
-    cwd: projectDir, timeoutSec: config.timeouts.install, logFile: join(logsDir, 'install.log'), env: quietEnv,
-  });
-  if (install.timedOut || install.exitCode !== 0) {
-    return finish(blocked('harness', install.timedOut ? 'install timed out' : `install failed (exit ${install.exitCode})`));
+  const install = (logName) =>
+    runWithTimeout(config.install, {
+      cwd: projectDir, timeoutSec: config.timeouts.install, logFile: join(logsDir, logName), env: quietEnv,
+    });
+  const installFailed = (r) => r.timedOut || r.exitCode !== 0;
+
+  const firstInstall = await install('install.log');
+  if (installFailed(firstInstall)) {
+    return finish(blocked('harness', firstInstall.timedOut ? 'install timed out' : `install failed (exit ${firstInstall.exitCode})`));
   }
 
   const baseline = await runChecks(config, projectDir, logsDir, 'baseline', quietEnv);
@@ -100,6 +126,7 @@ export async function runTask({ projectDir, issue, outDir, baseBranch, env = pro
   }
 
   const baseSha = git(projectDir, 'rev-parse', 'HEAD');
+  state.baseSha = baseSha;
   const dirtyBefore = git(projectDir, 'status', '--porcelain');
   const promptText = renderPrompt(readFileSync(join(HERE, 'prompt.md'), 'utf8'), {
     ISSUE: issue.number,
@@ -114,8 +141,9 @@ export async function runTask({ projectDir, issue, outDir, baseBranch, env = pro
   const promptFile = join(outDir, 'prompt.md');
   writeFileSync(promptFile, promptText);
 
+  state.agentRan = true;
   const agent = await runWithTimeout(
-    agentCommand({ model: meta.model, maxTurns: config.maxTurns, promptText, override: env.AGENT_CMD }),
+    agentCommand({ model: meta.model, maxTurns: config.maxTurns, promptText, addDir: outDir, override: env.AGENT_CMD }),
     {
       cwd: projectDir,
       timeoutSec: config.timeouts.claude,
@@ -137,7 +165,18 @@ export async function runTask({ projectDir, issue, outDir, baseBranch, env = pro
   const commits = Number(git(projectDir, 'rev-list', '--count', `${baseSha}..HEAD`));
   const diff = parseDiff(git(projectDir, 'diff', '--name-status', '-M', baseSha, 'HEAD'));
   const agentFailed = agent.timedOut || agent.exitCode !== 0;
-  const checks = agentFailed ? {} : await runChecks(config, projectDir, logsDir, 'verify', quietEnv);
+  let checks = {};
+  if (!agentFailed) {
+    // Verify what a clean checkout of the commits would see: drop ignored
+    // files the agent may have left (build output, installed packages) and
+    // install again from the committed manifests.
+    git(projectDir, 'clean', '-fdXq');
+    const reinstall = await install('install-verify.log');
+    if (installFailed(reinstall)) {
+      return finish({ ...blocked('harness', `install before verification failed (exit ${reinstall.exitCode})`), commits, diff, baseSha });
+    }
+    checks = await runChecks(config, projectDir, logsDir, 'verify', quietEnv);
+  }
   const reportText = existsSync(reportPath) ? readFileSync(reportPath, 'utf8') : null;
 
   const decision = decide({ agent, reportText, commits, diff, checks, config });

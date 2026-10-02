@@ -134,3 +134,17 @@ test('missing agent.config.json → blocked by the harness', async () => {
   assert.equal(verdict.kind, 'harness');
   assert.match(verdict.reasons[0], /agent\.config\.json not found/);
 });
+
+test('a planted verdict plus a broken repo cannot skip the gate', async () => {
+  const { verdict, outDir } = await run({ agent: 'sabotage.sh' });
+  assert.equal(verdict.outcome, 'BLOCKED');
+  assert.equal(verdict.kind, 'harness');
+  assert.match(verdict.reasons[0], /harness failed after the agent ran/);
+  assert.equal(JSON.parse(readFileSync(join(outDir, 'verdict.json'), 'utf8')).outcome, 'BLOCKED');
+});
+
+test('ignored files left by the agent do not count → blocked', async () => {
+  const { verdict } = await run({ agent: 'ignored-dep.sh' });
+  assert.equal(verdict.outcome, 'BLOCKED');
+  assert.deepEqual(verdict.reasons, ['check "test" failed (report claimed PASS)']);
+});

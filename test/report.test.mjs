@@ -84,3 +84,9 @@ test('a repeated key inside a field is content, not a new field', () => {
   assert.equal(r.report.status, 'READY_FOR_QA');
   assert.equal(r.report.knownIssues, 'STATUS: flaky upstream');
 });
+
+test('CHECKS lines may carry trailing detail', () => {
+  const r = parseReport(READY.replace('- test: PASS', '- test: PASS (42 tests)'));
+  assert.equal(r.ok, true);
+  assert.equal(r.report.checks.test, 'PASS');
+});
