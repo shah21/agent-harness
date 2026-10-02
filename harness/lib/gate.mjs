@@ -10,7 +10,10 @@ function blocked(kind, reasons, extra = {}) {
 // Rows are evaluated in spec order (§7); the first match wins.
 export function decide({ agent, reportText, commits, diff, checks, config }) {
   if (agent.timedOut) return blocked('agent', ['agent timed out before finishing']);
-  if (agent.exitCode !== 0) return blocked('agent', [`agent exited with code ${agent.exitCode}`]);
+  if (agent.exitCode !== 0) {
+    if (agent.authFailed) return blocked('agent', ['Claude authentication failed (401): check the CLAUDE_CODE_OAUTH_TOKEN secret']);
+    return blocked('agent', [`agent exited with code ${agent.exitCode}`]);
+  }
 
   if (reportText == null) return blocked('harness', ['agent wrote no report']);
   const parsed = parseReport(reportText);

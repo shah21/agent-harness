@@ -148,3 +148,9 @@ test('ignored files left by the agent do not count → blocked', async () => {
   assert.equal(verdict.outcome, 'BLOCKED');
   assert.deepEqual(verdict.reasons, ['check "test" failed (report claimed PASS)']);
 });
+
+test('Claude authentication failure is named, not just an exit code', async () => {
+  const { verdict } = await run({ agent: 'auth-fail.sh' });
+  assert.equal(verdict.kind, 'agent');
+  assert.deepEqual(verdict.reasons, ['Claude authentication failed (401): check the CLAUDE_CODE_OAUTH_TOKEN secret']);
+});
