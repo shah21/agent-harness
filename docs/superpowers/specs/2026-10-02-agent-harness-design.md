@@ -132,7 +132,7 @@ Steps (each with a timeout; any harness-step failure → `BLOCKED (harness)`):
 11. **Artifacts.** Always upload `report.md`, check logs, and the Claude transcript.
 12. **Continue.** Re-dispatch if queued issues remain.
 
-A final `if: always()` step guarantees an issue comment even when the job is killed by its own timeout. **The author never wakes up to silence.**
+The `publish` job runs whenever an issue was selected, even if `run` failed or timed out, and `publish.sh` traps its own errors to still label and comment. **The author never wakes up to silence.**
 
 ### Agent prompt rules (`prompt.md`)
 
@@ -195,10 +195,22 @@ Non-blocking warnings, included in the PR body: report `CHECKS` disagree with re
 
 ## 9. Security
 
-- Claude's environment contains only `CLAUDE_CODE_OAUTH_TOKEN`. No GitHub token is present in its environment or in `.git/config` (`persist-credentials: false`), so it cannot push, open PRs, or touch other repos.
-- Push, PR creation and comments happen in steps after the Claude step has exited.
-- Protected paths prevent the agent from modifying CI or its own gate configuration.
-- The caller workflow grants `GITHUB_TOKEN` exactly: `contents: write`, `pull-requests: write`, `issues: write`, `actions: write` (the last for re-dispatch).
+The run is split into three jobs, each on its own fresh VM:
+
+| Job | Token permissions | Does |
+|---|---|---|
+| `select` | `issues: write`, read otherwise | picks and claims the next issue |
+| `run` | `contents: read` + `CLAUDE_CODE_OAUTH_TOKEN` | install, baseline, agent, verify, gate; uploads verdict, logs and a `git bundle` of the branch |
+| `publish` | `contents`, `pull-requests`, `issues`, `actions: write` | fetches the bundle into a fresh repository and pushes with hooks disabled; opens the PR or comments |
+
+- The agent never shares a machine with a write-capable token. On GitHub-hosted runners the agent has passwordless `sudo`, so isolation must come from separate VMs, not from environment filtering.
+- Inside `run`, the agent process additionally receives only an allowlisted environment, and checkouts use `persist-credentials: false`.
+- `publish` uses a harness checked out fresh at the pinned ref and treats the verdict as data. It uses the run's verdict only when the `run` job succeeded; otherwise it publishes a fallback `BLOCKED (harness)`.
+- Protected paths prevent the agent from modifying CI or its own gate configuration through its commits.
+- Only same-repository `agent/issue-<n>` PRs can become a stacking base; other PRs carrying a task marker are ignored.
+- The caller workflow grants `contents: write`, `pull-requests: write`, `issues: write`, `actions: write`; each job narrows that to what it needs.
+
+**Known limit.** Within the `run` VM, a deliberately adversarial agent (for example via prompt injection) with `sudo` could tamper with the harness process and forge a `READY_FOR_QA` verdict. The worst outcome is a PR that misstates its check results; it cannot obtain a write token, merge, or touch other repositories. The gate defends against mistakes and dishonest reports, not against an agent with root on its own VM. Re-running checks in a separate job would close this and is deferred until needed.
 
 ## 10. Testing the harness
 

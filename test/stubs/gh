@@ -1,0 +1,14 @@
+#!/bin/sh
+# Fake gh for publish.sh tests: logs every call (and any --body-file contents) to $GH_LOG.
+echo "gh $*" >> "$GH_LOG"
+prev=""
+for a in "$@"; do
+  [ "$prev" = "--body-file" ] && cat "$a" >> "$GH_LOG"
+  prev="$a"
+done
+case "$1 $2" in
+  "pr create")
+    if [ -n "$GH_FAIL_PR_CREATE" ]; then echo "pull request create failed" >&2; exit 1; fi
+    echo "https://github.com/o/r/pull/9" ;;
+esac
+exit 0
