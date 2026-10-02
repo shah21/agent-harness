@@ -1,0 +1,6 @@
+{
+  "install": "true",
+  "checks": { "test": "sh tests/run.sh", "lint": "sh lint.sh" },
+  "timeouts": { "install": "30s", "claude": "3s", "check": "10s" },
+  "testGlobs": ["tests/**"]
+}
