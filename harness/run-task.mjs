@@ -10,12 +10,31 @@ import { loadConfig } from './lib/config.mjs';
 import { parseTaskRef, findTaskHeading } from './lib/issue.mjs';
 import { decide } from './lib/gate.mjs';
 import { runWithTimeout } from './lib/run-cmd.mjs';
-import { agentCommand, agentEnv, renderPrompt } from './lib/agent.mjs';
+import { agentCommand, agentEnv, renderPrompt, claudeTokens, probeCommand, detectUsageLimit, detectAuthFailure } from './lib/agent.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
 const blocked = (kind, reason) => ({ outcome: 'BLOCKED', kind, reasons: [reason], warnings: [] });
+const waiting = (accounts) => ({
+  outcome: 'WAITING', kind: 'usage-limit', reasons: [`usage limit reached on all ${accounts} Claude accounts`], warnings: [],
+});
+
+// Try each configured account with one cheap turn; returns the ones that work.
+async function probeAccounts({ tokens, model, env, projectDir, logsDir }) {
+  const usable = [];
+  let limited = 0;
+  for (const [i, token] of tokens.entries()) {
+    const logFile = join(logsDir, `probe-${i + 1}.log`);
+    const r = await runWithTimeout(probeCommand({ model, override: env.AGENT_PROBE_CMD }), {
+      cwd: projectDir, timeoutSec: 120, logFile, env: agentEnv(env, { CLAUDE_CODE_OAUTH_TOKEN: token }),
+    });
+    const text = readFileSync(logFile, 'utf8');
+    if (detectUsageLimit(text)) limited++;
+    else if (r.exitCode === 0 && !r.timedOut && !detectAuthFailure(text)) usable.push({ token, account: i + 1 });
+  }
+  return { usable, limited };
+}
 
 export function parseDiff(text) {
   return text
@@ -55,7 +74,7 @@ export async function runTask({ projectDir, issue, outDir, baseBranch, env = pro
 
   const meta = {
     issue: issue.number, issueTitle: issue.title, baseBranch, branch: `agent/issue-${issue.number}`,
-    plan: null, task: null, taskTitle: null, model: null, commits: 0, checks: {}, report: null, reportText: null,
+    plan: null, task: null, taskTitle: null, model: null, account: null, commits: 0, checks: {}, report: null, reportText: null,
   };
   const finish = (result) => {
     const verdict = { ...meta, ...result };
@@ -104,6 +123,23 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, env, me
   if (!meta.taskTitle) return finish(blocked('gate', `bad task reference: no "Task ${ref.task}:" heading in ${ref.plan}`));
   meta.model = issue.labels.includes('agent:opus') ? 'opus' : config.model;
 
+  // Accounts: probe each before any slow work. Tests that replace the agent
+  // and give no probe command skip probing.
+  const tokens = claudeTokens(env);
+  let accounts = tokens.map((token, i) => ({ token, account: i + 1 }));
+  if (tokens.length && !(env.AGENT_CMD && !env.AGENT_PROBE_CMD)) {
+    const { usable, limited } = await probeAccounts({ tokens, model: meta.model, env, projectDir, logsDir });
+    if (usable.length === 0) {
+      if (limited > 0) return finish(waiting(tokens.length));
+      const allAuth = tokens.every((_, i) => detectAuthFailure(readFileSync(join(logsDir, `probe-${i + 1}.log`), 'utf8')));
+      return finish(blocked('agent', allAuth
+        ? 'Claude authentication failed (401) on every account: check the CLAUDE_CODE_OAUTH_TOKEN secrets'
+        : 'Claude did not respond on any account; see logs/probe-*.log'));
+    }
+    accounts = usable;
+  }
+  if (accounts.length === 0) accounts = [{ token: undefined, account: null }];
+
   git(projectDir, 'checkout', '-q', '-B', meta.branch);
   git(projectDir, 'config', 'user.name', 'agent-harness');
   git(projectDir, 'config', 'user.email', 'agent-harness@users.noreply.github.com');
@@ -143,22 +179,33 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, env, me
   writeFileSync(promptFile, promptText);
 
   state.agentRan = true;
-  const agent = await runWithTimeout(
-    agentCommand({ model: meta.model, maxTurns: config.maxTurns, promptText, addDir: outDir, override: env.AGENT_CMD }),
-    {
-      cwd: projectDir,
-      timeoutSec: config.timeouts.claude,
-      logFile: join(logsDir, 'agent.log'),
-      env: agentEnv(env, { REPORT_PATH: reportPath, PROMPT_FILE: promptFile }),
-    },
-  );
+  const warnings = [];
+  let agent;
+  for (const [i, attempt] of accounts.entries()) {
+    rmSync(reportPath, { force: true });
+    meta.account = attempt.account;
+    const logFile = join(logsDir, i === 0 ? 'agent.log' : `agent-${i + 1}.log`);
+    const extra = { REPORT_PATH: reportPath, PROMPT_FILE: promptFile };
+    if (attempt.token) extra.CLAUDE_CODE_OAUTH_TOKEN = attempt.token;
+    agent = await runWithTimeout(
+      agentCommand({ model: meta.model, maxTurns: config.maxTurns, promptText, addDir: outDir, override: env.AGENT_CMD }),
+      { cwd: projectDir, timeoutSec: config.timeouts.claude, logFile, env: agentEnv(env, extra) },
+    );
+    const text = readFileSync(logFile, 'utf8');
+    agent.authFailed = detectAuthFailure(text);
+    if (agent.exitCode === 0 || !detectUsageLimit(text)) break;
 
-  agent.authFailed = /authentication_failed|Invalid bearer token/.test(readFileSync(join(logsDir, 'agent.log'), 'utf8'));
+    // Out of usage mid-task: throw the attempt away and start over cleanly.
+    git(projectDir, 'checkout', '-q', '-f', meta.branch);
+    git(projectDir, 'reset', '-q', '--hard', baseSha);
+    git(projectDir, 'clean', '-fdq');
+    if (i === accounts.length - 1) return finish({ ...waiting(Math.max(tokens.length, 1)), commits: 0 });
+    warnings.push(`usage limit hit on Claude account ${attempt.account}; restarted on account ${accounts[i + 1].account}`);
+  }
 
   const head = git(projectDir, 'rev-parse', '--abbrev-ref', 'HEAD');
   if (head !== meta.branch) return finish(blocked('gate', `agent switched to branch "${head}"; work must stay on ${meta.branch}`));
 
-  const warnings = [];
   const dirtyAfter = git(projectDir, 'status', '--porcelain');
   if (dirtyAfter) {
     if (dirtyAfter !== dirtyBefore) warnings.push('agent left uncommitted changes; they were stashed and are not part of this result');

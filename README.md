@@ -17,6 +17,10 @@ Design: `docs/superpowers/specs/2026-10-02-agent-harness-design.md`
 
 Open an issue whose body is `plan: <path>` and `task: <n>`, then add the `agent` label (`agent:opus` too for hard tasks). Label several before bed; they run one at a time, ordered by plan then task, and dependent tasks stack on each other's PRs. Retry a blocked task by removing `agent:blocked` and adding `agent`.
 
+## Usage limits and a second account
+
+Before any work, each run tries every configured account with one cheap turn. If an account runs out of usage mid-task, the attempt is discarded and the task restarts on the next account. Set the optional secret `CLAUDE_CODE_OAUTH_TOKEN_2` to add a second account. When every account is out, the issue is labelled `agent:waiting`, the queue pauses, and the scheduled trigger in `agent.yml` resumes it.
+
 ## Known limitation
 
 PRs opened with `GITHUB_TOKEN` do not trigger the project's other workflows.

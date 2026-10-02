@@ -46,7 +46,7 @@ push_branch() {
 # queue would re-dispatch it forever.
 stage="labels"
 gh issue edit "$issue" --repo "$REPO" --remove-label agent --remove-label agent:running \
-  --remove-label agent:ready --remove-label agent:blocked >/dev/null || true
+  --remove-label agent:ready --remove-label agent:blocked --remove-label agent:waiting >/dev/null || true
 
 pr=""
 if [ "$outcome" = "READY_FOR_QA" ]; then
@@ -63,6 +63,10 @@ if [ "$outcome" = "READY_FOR_QA" ]; then
   fi
   stage="label-outcome"
   gh issue edit "$issue" --repo "$REPO" --add-label agent:ready >/dev/null
+elif [ "$outcome" = "WAITING" ]; then
+  # Out of usage on every account: nothing to push; a scheduled run resumes it.
+  stage="label-outcome"
+  gh issue edit "$issue" --repo "$REPO" --add-label agent:waiting >/dev/null
 else
   if has_bundle; then
     push_branch

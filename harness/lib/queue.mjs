@@ -15,7 +15,7 @@ const labelNames = (labels) => (labels ?? []).map((l) => (typeof l === 'string' 
 
 export function selectNext({ issues, prs, defaultBranch }) {
   const all = issues.map((i) => ({ ...i, labels: labelNames(i.labels), ref: parseTaskRef(i.body) }));
-  const queued = all.filter((i) => i.labels.includes('agent') && !i.labels.includes('agent:running'));
+  const queued = all.filter((i) => (i.labels.includes('agent') || i.labels.includes('agent:waiting')) && !i.labels.includes('agent:running'));
   if (queued.length === 0) return { issue: null };
 
   queued.sort((a, b) => {

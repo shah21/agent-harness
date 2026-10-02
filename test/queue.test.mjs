@@ -80,3 +80,9 @@ test('only same-repo agent/issue-<n> PRs can be stacking parents', () => {
   ];
   assert.equal(select([issue(3, 3, ['agent'])], prs).base, 'agent/issue-5');
 });
+
+test('agent:waiting issues count as queued', () => {
+  const s = select([issue(2, 2, ['agent']), issue(1, 1, ['agent:waiting'])]);
+  assert.equal(s.issue.number, 1);
+  assert.equal(s.skip, null);
+});
