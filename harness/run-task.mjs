@@ -100,10 +100,6 @@ export async function runTask({ projectDir, issue, outDir, baseBranch, env = pro
 }
 
 async function execute({ projectDir, issue, outDir, logsDir, reportPath, env, meta, finish, state }) {
-  // Install and checks run project code: give them no tokens at all.
-  const quietEnv = agentEnv(env, {});
-  delete quietEnv.CLAUDE_CODE_OAUTH_TOKEN;
-
   const configPath = join(projectDir, 'agent.config.json');
   if (!existsSync(configPath)) return finish(blocked('harness', 'agent.config.json not found in project root'));
   let config;
@@ -112,6 +108,9 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, env, me
   } catch (e) {
     return finish(blocked('harness', `invalid agent.config.json: ${e.message}`));
   }
+  // Install and checks run project code: give them no tokens at all.
+  const quietEnv = { ...agentEnv(env, {}), ...config.env };
+  delete quietEnv.CLAUDE_CODE_OAUTH_TOKEN;
 
   const ref = parseTaskRef(issue.body);
   if (ref.error) return finish(blocked('gate', `bad task reference: ${ref.error}`));
@@ -185,7 +184,7 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, env, me
     rmSync(reportPath, { force: true });
     meta.account = attempt.account;
     const logFile = join(logsDir, i === 0 ? 'agent.log' : `agent-${i + 1}.log`);
-    const extra = { REPORT_PATH: reportPath, PROMPT_FILE: promptFile };
+    const extra = { ...config.env, REPORT_PATH: reportPath, PROMPT_FILE: promptFile };
     if (attempt.token) extra.CLAUDE_CODE_OAUTH_TOKEN = attempt.token;
     agent = await runWithTimeout(
       agentCommand({ model: meta.model, maxTurns: config.maxTurns, promptText, addDir: outDir, override: env.AGENT_CMD }),

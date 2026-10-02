@@ -12,6 +12,22 @@ export function parseDuration(value) {
   return Number(m[1]) * { s: 1, m: 60, h: 3600 }[m[2]];
 }
 
+// Names the harness controls itself; a project config must not override them.
+const RESERVED_ENV = /^(CLAUDE_CODE_OAUTH_TOKEN.*|GITHUB_.*|GH_.*|ACTIONS_.*|RUNNER_.*|PATH|HOME|REPORT_PATH|PROMPT_FILE|AGENT_.*)$/;
+
+// Non-secret values the project needs to install, build and test (e.g. a
+// placeholder DATABASE_URL). Committed in the repo, so never real secrets.
+function envMap(value) {
+  if (value === undefined) return {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('"env" must be an object of NAME: "value"');
+  for (const [name, v] of Object.entries(value)) {
+    if (!/^[A-Z_][A-Z0-9_]*$/.test(name)) throw new Error(`env name "${name}" must be UPPER_SNAKE_CASE`);
+    if (RESERVED_ENV.test(name)) throw new Error(`env "${name}" is reserved by the harness`);
+    if (typeof v !== 'string') throw new Error(`env "${name}" must be a string`);
+  }
+  return { ...value };
+}
+
 function stringArray(value, field) {
   if (value === undefined) return [];
   if (!Array.isArray(value) || value.some((x) => typeof x !== 'string')) {
@@ -55,5 +71,6 @@ export function loadConfig(text) {
     timeouts,
     protectedPaths: [...new Set([...ALWAYS_PROTECTED, ...stringArray(raw.protectedPaths, 'protectedPaths')])],
     testGlobs: raw.testGlobs === undefined ? DEFAULTS.testGlobs : stringArray(raw.testGlobs, 'testGlobs'),
+    env: envMap(raw.env),
   };
 }

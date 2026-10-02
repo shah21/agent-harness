@@ -208,3 +208,18 @@ test('a probe that fails authentication on every account → BLOCKED with the au
   assert.equal(verdict.outcome, 'BLOCKED');
   assert.deepEqual(verdict.reasons, ['Claude authentication failed (401) on every account: check the CLAUDE_CODE_OAUTH_TOKEN secrets']);
 });
+
+test('config env reaches install, checks and the agent', async () => {
+  const { verdict, outDir } = await run({
+    cmd: `echo "$FIXTURE_FLAG" > "$(dirname "$REPORT_PATH")/seen" && sh "${join(AGENTS, 'honest.sh')}"`,
+    mutate: (dir) => {
+      const cfg = JSON.parse(readFileSync(join(dir, 'agent.config.json'), 'utf8'));
+      cfg.env = { FIXTURE_FLAG: 'on' };
+      cfg.install = 'test "$FIXTURE_FLAG" = on';
+      cfg.checks.test = 'test "$FIXTURE_FLAG" = on && sh tests/run.sh';
+      writeFileSync(join(dir, 'agent.config.json'), JSON.stringify(cfg));
+    },
+  });
+  assert.equal(verdict.outcome, 'READY_FOR_QA', JSON.stringify(verdict.reasons));
+  assert.equal(readFileSync(join(outDir, 'seen'), 'utf8').trim(), 'on');
+});
