@@ -1,0 +1,140 @@
+name: agent-run-task
+
+on:
+  workflow_call:
+    inputs:
+      harness_repo:
+        type: string
+        required: true
+      harness_ref:
+        type: string
+        default: v1
+      caller_workflow:
+        type: string
+        default: agent.yml
+      node_version:
+        type: string
+        default: '22'
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: true
+
+jobs:
+  run-task:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    concurrency:
+      group: agent-${{ github.repository }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout harness
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.harness_repo }}
+          ref: ${{ inputs.harness_ref }}
+          path: .harness
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+
+      - name: Ensure labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for l in agent agent:opus agent:running agent:ready agent:blocked; do
+            gh label create "$l" --repo "$GITHUB_REPOSITORY" --color 5319e7 >/dev/null 2>&1 || true
+          done
+
+      - name: Select next task
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/agent"
+          cd "$RUNNER_TEMP/agent"
+          gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit 200 --json number,title,body,labels > issues.json
+          gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 100 --json number,headRefName,body > prs.json
+          default=$(gh repo view "$GITHUB_REPOSITORY" --json defaultBranchRef -q .defaultBranchRef.name)
+          node "$GITHUB_WORKSPACE/.harness/harness/cli.mjs" select \
+            --issues issues.json --prs prs.json --default-branch "$default" > selection.json
+          cat selection.json
+          jq '.issue' selection.json > issue.json
+          {
+            echo "issue=$(jq -r '.issue.number // empty' selection.json)"
+            echo "base=$(jq -r '.base // empty' selection.json)"
+            echo "skipped=$(jq -r 'if .skip then "true" else "false" end' selection.json)"
+            echo "default=$default"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Claim issue
+        if: steps.select.outputs.issue != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh issue edit "${{ steps.select.outputs.issue }}" --repo "$GITHUB_REPOSITORY" --remove-label agent --add-label agent:running
+
+      - name: Record skipped task
+        if: steps.select.outputs.issue != '' && steps.select.outputs.skipped == 'true'
+        run: node .harness/harness/cli.mjs skip-verdict --selection "$RUNNER_TEMP/agent/selection.json" > "$RUNNER_TEMP/agent/verdict.json"
+
+      - name: Checkout project at base
+        if: steps.select.outputs.issue != '' && steps.select.outputs.skipped == 'false'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.select.outputs.base }}
+          path: project
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install tooling
+        if: steps.select.outputs.issue != '' && steps.select.outputs.skipped == 'false'
+        run: |
+          corepack enable
+          npm install -g @anthropic-ai/claude-code
+
+      # Only the Claude token is passed; run-task.mjs further strips the
+      # environment to an allowlist before starting the agent.
+      - name: Run task
+        if: steps.select.outputs.issue != '' && steps.select.outputs.skipped == 'false'
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: >-
+          node .harness/harness/run-task.mjs
+          --project project
+          --issue "$RUNNER_TEMP/agent/issue.json"
+          --out "$RUNNER_TEMP/agent"
+          --base-branch "${{ steps.select.outputs.base }}"
+
+      - name: Publish result
+        if: always() && steps.select.outputs.issue != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PROJECT_DIR: ${{ github.workspace }}/project
+        run: |
+          export VERDICT="$RUNNER_TEMP/agent/verdict.json"
+          if [ ! -f "$VERDICT" ]; then
+            node .harness/harness/cli.mjs fallback-verdict --selection "$RUNNER_TEMP/agent/selection.json" > "$VERDICT"
+          fi
+          bash .harness/harness/publish.sh
+
+      - name: Upload artifacts
+        if: always() && steps.select.outputs.issue != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-issue-${{ steps.select.outputs.issue }}
+          path: ${{ runner.temp }}/agent
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Continue queue
+        if: always() && steps.select.outputs.issue != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          remaining=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label agent --json number -q 'length')
+          if [ "$remaining" -gt 0 ]; then
+            gh workflow run "${{ inputs.caller_workflow }}" --repo "$GITHUB_REPOSITORY" --ref "${{ steps.select.outputs.default }}"
+          fi
