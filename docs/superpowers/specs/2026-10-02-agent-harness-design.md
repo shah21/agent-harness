@@ -14,7 +14,7 @@ Night:    harness → Claude Code → harness re-runs checks → gate
 Morning:  PR per task (READY_FOR_QA)  or  issue comment (BLOCKED)
 ```
 
-Derived from the author's work MVP ("ToolJet Autonomous Coding Agent"), keeping its principles and dropping the ToolJet-specific machinery:
+Built on these principles:
 
 - **Correctness over completion.** `BLOCKED` is a valid, successful outcome.
 - **Deterministic checks are authoritative.** The harness re-runs every check itself; Claude's report is a claim, not evidence.
