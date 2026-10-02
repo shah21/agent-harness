@@ -49,3 +49,11 @@ test('blocked comment without a report or commits stays short', () => {
   assert.doesNotMatch(c, /pushed to/);
   assert.match(c, /base is red/);
 });
+
+test('waiting comment explains the pause and automatic resume', () => {
+  const c = renderComment({ ...readyVerdict, outcome: 'WAITING', kind: 'usage-limit', reasons: ['usage limit reached on all 2 Claude accounts'], warnings: [], commits: 0, checks: {}, report: null }, { runUrl: 'https://run' });
+  assert.match(c, /WAITING/);
+  assert.match(c, /usage limit reached on all 2 Claude accounts/);
+  assert.match(c, /resume/i);
+  assert.doesNotMatch(c, /To retry/);
+});

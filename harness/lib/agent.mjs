@@ -29,3 +29,32 @@ export function renderPrompt(template, vars) {
     return String(vars[name]);
   });
 }
+
+const TOKEN_VARS = ['CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN_2'];
+
+// Accounts in the order they are tried; an empty secret means "not configured".
+export function claudeTokens(env) {
+  return TOKEN_VARS.map((name) => env[name]).filter(Boolean);
+}
+
+// One cheap turn to learn whether an account can work right now.
+export function probeCommand({ model, override }) {
+  if (override) return ['sh', '-c', override];
+  return ['claude', '-p', 'Reply with just: ok', '--model', model, '--max-turns', '1', '--output-format', 'stream-json', '--verbose'];
+}
+
+// Only Claude's own result line (or its plain-text banner) counts: a tool call
+// that merely mentions "rate_limit" must not look like an exhausted account.
+export function detectUsageLimit(text) {
+  return String(text)
+    .split('\n')
+    .some(
+      (line) =>
+        /^Claude AI usage limit reached/.test(line.trim()) ||
+        (line.includes('"type":"result"') && line.includes('"is_error":true') && /usage limit|rate.?limit|"api_error_status":429/i.test(line)),
+    );
+}
+
+export function detectAuthFailure(text) {
+  return /authentication_failed|Invalid bearer token/.test(String(text));
+}

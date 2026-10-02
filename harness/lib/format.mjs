@@ -46,6 +46,17 @@ export function renderComment(v, { runUrl, prUrl } = {}) {
   if (v.outcome === 'READY_FOR_QA') {
     return `✅ **READY_FOR_QA** — ${prUrl ?? 'PR opened'}\n\n[Run log and artifacts](${runUrl})`;
   }
+  if (v.outcome === 'WAITING') {
+    return [
+      `⏸️ **WAITING** (${v.kind})`,
+      '',
+      bullets(v.reasons),
+      '',
+      'The queue is paused. A scheduled run resumes it automatically once an account has usage again.',
+      '',
+      `[Run log and artifacts](${runUrl})`,
+    ].join('\n');
+  }
   const lines = [`⛔ **BLOCKED** (${v.kind})`, '', bullets(v.reasons)];
   const r = v.report;
   if (r?.status === 'BLOCKED') {

@@ -96,3 +96,17 @@ test('BLOCKED without a bundle only comments', () => {
   assert.equal(remoteHas(remote, 'refs/heads/agent/issue-7'), false);
   assert.match(r.log, /bad task reference/);
 });
+
+test('WAITING labels agent:waiting, comments, and pushes nothing', () => {
+  const { dir, remote } = setup(
+    { ...baseVerdict, outcome: 'WAITING', kind: 'usage-limit', reasons: ['usage limit reached on all 2 Claude accounts'], commits: 0, report: null },
+    { bundle: false },
+  );
+  const r = publish(dir, remote);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(remoteHas(remote, 'refs/heads/agent/issue-7'), false);
+  assert.match(r.log, /--remove-label agent:waiting/);
+  assert.match(r.log, /--add-label agent:waiting/);
+  assert.doesNotMatch(r.log, /--add-label agent:blocked/);
+  assert.match(r.log, /WAITING\*\* \(usage-limit\)/);
+});

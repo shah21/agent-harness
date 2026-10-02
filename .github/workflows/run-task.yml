@@ -29,6 +29,9 @@ on:
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN:
         required: true
+      # Optional second account, tried when the first is out of usage.
+      CLAUDE_CODE_OAUTH_TOKEN_2:
+        required: false
 
 jobs:
   select:
@@ -60,7 +63,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          for l in agent agent:opus agent:running agent:ready agent:blocked; do
+          for l in agent agent:opus agent:running agent:ready agent:blocked agent:waiting; do
             gh label create "$l" --repo "$GITHUB_REPOSITORY" --color 5319e7 >/dev/null 2>&1 || true
           done
 
@@ -90,7 +93,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE: ${{ steps.select.outputs.issue }}
-        run: gh issue edit "$ISSUE" --repo "$GITHUB_REPOSITORY" --remove-label agent --add-label agent:running
+        run: gh issue edit "$ISSUE" --repo "$GITHUB_REPOSITORY" --remove-label agent --remove-label agent:waiting --add-label agent:running
 
       - name: Upload selection
         if: steps.select.outputs.issue != ''
@@ -149,6 +152,7 @@ jobs:
         timeout-minutes: 75
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          CLAUDE_CODE_OAUTH_TOKEN_2: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_2 }}
           BASE: ${{ needs.select.outputs.base }}
         run: >-
           node .harness/harness/run-task.mjs
@@ -244,6 +248,11 @@ jobs:
           CALLER: ${{ inputs.caller_workflow }}
           DEFAULT_BRANCH: ${{ needs.select.outputs.default }}
         run: |
+          # Every account is out of usage: stay paused until the scheduled run.
+          if [ "$(jq -r .outcome "$RUNNER_TEMP/publish-verdict.json" 2>/dev/null)" = "WAITING" ]; then
+            echo "paused: usage limit on all accounts"
+            exit 0
+          fi
           remaining=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label agent --json number -q 'length')
           if [ "$remaining" -gt 0 ]; then
             gh workflow run "$CALLER" --repo "$GITHUB_REPOSITORY" --ref "$DEFAULT_BRANCH"
