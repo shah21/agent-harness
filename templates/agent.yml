@@ -5,6 +5,12 @@ on:
     types: [labeled]
   workflow_dispatch:
 
+# One select → run → publish chain at a time per repository.
+concurrency:
+  group: agent-${{ github.repository }}
+  cancel-in-progress: false
+
+# Keep harness_ref equal to the @ref in `uses:` below.
 permissions:
   contents: write
   pull-requests: write
