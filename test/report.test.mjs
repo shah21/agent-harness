@@ -90,3 +90,9 @@ test('CHECKS lines may carry trailing detail', () => {
   assert.equal(r.ok, true);
   assert.equal(r.report.checks.test, 'PASS');
 });
+
+test('CHECKS lines may name the command between the check and its result', () => {
+  const r = parseReport(READY.replace('- test: PASS', '- test (node --test): PASS'));
+  assert.equal(r.ok, true);
+  assert.equal(r.report.checks.test, 'PASS');
+});

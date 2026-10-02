@@ -35,7 +35,8 @@ SUMMARY:
 CHANGED_FILES:
 - <one path per line: every file changed by your commits>
 CHECKS:
-- <check name>: PASS or FAIL or NOT_RUN   (one line per project check listed above)
+{{CHECKS_REPORT}}
+(one line per check, exactly in this form; replace the placeholder with PASS, FAIL or NOT_RUN)
 SELF_REVIEW:
 <scope respected? tests added? risks?>
 KNOWN_ISSUES:

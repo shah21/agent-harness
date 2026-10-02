@@ -33,8 +33,9 @@ test('the shipped prompt uses only the documented variables', () => {
   const template = readFileSync(new URL('../harness/prompt.md', import.meta.url), 'utf8');
   const out = renderPrompt(template, {
     ISSUE: 7, PLAN: 'docs/p.md', TASK: 1, TASK_TITLE: 'Add greeting', REPORT_PATH: '/tmp/report.md',
-    BRANCH: 'agent/issue-7', CHECKS: '- test: `npm test`', PROTECTED: '`.github/**`',
+    BRANCH: 'agent/issue-7', CHECKS: '- test: `npm test`', CHECKS_REPORT: '- test: PASS', PROTECTED: '`.github/**`',
   });
   assert.match(out, /\/tmp\/report\.md/);
+  assert.match(out, /^CHECKS:\n- test: PASS$/m);
   assert.doesNotMatch(out, /\{\{/);
 });

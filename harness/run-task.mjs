@@ -136,6 +136,7 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, env, me
     REPORT_PATH: reportPath,
     BRANCH: meta.branch,
     CHECKS: Object.entries(config.checks).map(([name, cmd]) => `   - ${name}: \`${cmd}\``).join('\n'),
+    CHECKS_REPORT: Object.keys(config.checks).map((name) => `- ${name}: <PASS|FAIL|NOT_RUN>`).join('\n'),
     PROTECTED: config.protectedPaths.map((p) => `\`${p}\``).join(', '),
   });
   const promptFile = join(outDir, 'prompt.md');
@@ -151,6 +152,8 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, env, me
       env: agentEnv(env, { REPORT_PATH: reportPath, PROMPT_FILE: promptFile }),
     },
   );
+
+  agent.authFailed = /authentication_failed|Invalid bearer token/.test(readFileSync(join(logsDir, 'agent.log'), 'utf8'));
 
   const head = git(projectDir, 'rev-parse', '--abbrev-ref', 'HEAD');
   if (head !== meta.branch) return finish(blocked('gate', `agent switched to branch "${head}"; work must stay on ${meta.branch}`));
