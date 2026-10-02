@@ -61,7 +61,7 @@ async function runChecks(config, projectDir, logsDir, phase, env) {
   return results;
 }
 
-export async function runTask({ projectDir, issue, outDir, baseBranch, env = process.env }) {
+export async function runTask({ projectDir, issue, outDir, baseBranch, configPath, env = process.env }) {
   projectDir = resolve(projectDir);
   outDir = resolve(outDir);
   const logsDir = join(outDir, 'logs');
@@ -84,7 +84,7 @@ export async function runTask({ projectDir, issue, outDir, baseBranch, env = pro
   const state = { agentRan: false, baseSha: null };
 
   try {
-    return await execute({ projectDir, issue, outDir, logsDir, reportPath, env, meta, finish, state });
+    return await execute({ projectDir, issue, outDir, logsDir, reportPath, configPath, env, meta, finish, state });
   } catch (e) {
     // The agent can leave the repository in any state; a crash here must still
     // produce a BLOCKED verdict rather than no verdict at all.
@@ -99,8 +99,9 @@ export async function runTask({ projectDir, issue, outDir, baseBranch, env = pro
   }
 }
 
-async function execute({ projectDir, issue, outDir, logsDir, reportPath, env, meta, finish, state }) {
-  const configPath = join(projectDir, 'agent.config.json');
+async function execute({ projectDir, issue, outDir, logsDir, reportPath, configPath: configOverride, env, meta, finish, state }) {
+  // The workflow passes the default branch's config so stacked bases never run a stale one.
+  const configPath = configOverride ?? join(projectDir, 'agent.config.json');
   if (!existsSync(configPath)) return finish(blocked('harness', 'agent.config.json not found in project root'));
   let config;
   try {
@@ -243,7 +244,7 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, env, me
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const { values } = parseArgs({
-    options: { project: { type: 'string' }, issue: { type: 'string' }, out: { type: 'string' }, 'base-branch': { type: 'string' } },
+    options: { project: { type: 'string' }, issue: { type: 'string' }, out: { type: 'string' }, 'base-branch': { type: 'string' }, config: { type: 'string' } },
   });
   for (const key of ['project', 'issue', 'out', 'base-branch']) {
     if (!values[key]) {
@@ -256,6 +257,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     issue: JSON.parse(readFileSync(values.issue, 'utf8')),
     outDir: values.out,
     baseBranch: values['base-branch'],
+    configPath: values.config,
   });
   console.log(`${verdict.outcome}${verdict.kind ? ` (${verdict.kind})` : ''}: ${verdict.reasons.join('; ') || 'all checks passed'}`);
 }
