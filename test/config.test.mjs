@@ -44,3 +44,19 @@ test('rejects bad configs with a readable message', () => {
   assert.throws(() => loadConfig(JSON.stringify({ install: 'x', checks: { t: 'x' }, maxTurns: 0 })), /maxTurns/);
   assert.throws(() => loadConfig(JSON.stringify({ install: 'x', checks: { t: 'x' }, testGlobs: 'x' })), /testGlobs/);
 });
+
+test('env defaults to empty and accepts plain string values', () => {
+  assert.deepEqual(loadConfig(minimal).env, {});
+  const c = loadConfig(JSON.stringify({ install: 'x', checks: { t: 'y' }, env: { DATABASE_URL: 'postgres://u:p@localhost/db' } }));
+  assert.deepEqual(c.env, { DATABASE_URL: 'postgres://u:p@localhost/db' });
+});
+
+test('env rejects non-strings, bad names and credentials the harness owns', () => {
+  const env = (e) => JSON.stringify({ install: 'x', checks: { t: 'y' }, env: e });
+  assert.throws(() => loadConfig(env([])), /"env" must be an object/);
+  assert.throws(() => loadConfig(env({ PORT: 3000 })), /env "PORT" must be a string/);
+  assert.throws(() => loadConfig(env({ 'bad-name': 'x' })), /env name "bad-name"/);
+  assert.throws(() => loadConfig(env({ CLAUDE_CODE_OAUTH_TOKEN: 'x' })), /reserved/);
+  assert.throws(() => loadConfig(env({ GITHUB_TOKEN: 'x' })), /reserved/);
+  assert.throws(() => loadConfig(env({ PATH: '/tmp' })), /reserved/);
+});

@@ -7,7 +7,7 @@ Design: `docs/superpowers/specs/2026-10-02-agent-harness-design.md`
 ## Add to a project
 
 1. Copy `templates/agent.yml` to `.github/workflows/agent.yml`; replace `OWNER`.
-2. Copy `templates/agent.config.json` to the repo root; adjust commands.
+2. Copy `templates/agent.config.json` to the repo root; adjust commands. Add `"env": { "NAME": "value" }` for non-secret values the build or tests need (for example a placeholder `DATABASE_URL`); it is committed, so never put real secrets there.
 3. Copy `templates/agent-task.md` to `.github/ISSUE_TEMPLATE/agent-task.md`.
 4. `claude setup-token`, then `gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo <owner>/<repo>`.
 5. Settings → Actions → General → enable *Allow GitHub Actions to create and approve pull requests*.
