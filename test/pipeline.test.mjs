@@ -223,3 +223,20 @@ test('config env reaches install, checks and the agent', async () => {
   assert.equal(verdict.outcome, 'READY_FOR_QA', JSON.stringify(verdict.reasons));
   assert.equal(readFileSync(join(outDir, 'seen'), 'utf8').trim(), 'on');
 });
+
+test('an explicit configPath wins over the stale config on the base branch', async () => {
+  const projectDir = makeProject((dir) => {
+    // The base branch's config predates a fix: its check cannot pass.
+    const cfg = JSON.parse(readFileSync(join(dir, 'agent.config.json'), 'utf8'));
+    cfg.checks.test = 'false';
+    writeFileSync(join(dir, 'agent.config.json'), JSON.stringify(cfg));
+  });
+  const outDir = mkdtempSync(join(tmpdir(), 'harness-out-'));
+  const configPath = join(outDir, 'default-branch.config.json');
+  writeFileSync(configPath, readFileSync(join(HERE, 'fixtures', 'project', 'agent.config.json')));
+  const verdict = await runTask({
+    projectDir, issue: ISSUE, outDir, baseBranch: 'main', configPath,
+    env: { ...process.env, AGENT_CMD: `sh "${join(AGENTS, 'honest.sh')}"` },
+  });
+  assert.equal(verdict.outcome, 'READY_FOR_QA', JSON.stringify(verdict.reasons));
+});

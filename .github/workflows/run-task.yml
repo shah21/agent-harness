@@ -146,6 +146,12 @@ jobs:
           corepack enable
           npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
 
+      # Config always comes from the default branch, never a stale stacked base.
+      - name: Read config from the default branch
+        env:
+          DEFAULT_BRANCH: ${{ needs.select.outputs.default }}
+        run: git -C project show "origin/$DEFAULT_BRANCH:agent.config.json" > "$RUNNER_TEMP/agent/default.agent.config.json"
+
       # The step timeout sits inside the job's so the bundle and upload steps
       # below still get to run when the agent overruns.
       - name: Run task
@@ -160,6 +166,7 @@ jobs:
           --issue "$RUNNER_TEMP/agent/issue.json"
           --out "$RUNNER_TEMP/agent"
           --base-branch "$BASE"
+          --config "$RUNNER_TEMP/agent/default.agent.config.json"
 
       - name: Bundle the agent branch
         if: always()
