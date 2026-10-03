@@ -7,12 +7,19 @@ const SKIP_DIRS = new Set(['.git', 'node_modules']);
 
 // Regular files only, in a stable order. Dirents come from lstat, so symlinks
 // are neither files nor directories here and are never followed.
-function* walk(root, dir = root) {
-  const entries = readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+// An unreadable directory (e.g. a root-owned database volume) is reported and skipped.
+function* walk(root, onError, dir = root) {
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+  } catch (e) {
+    onError(e);
+    return;
+  }
   for (const entry of entries) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (!SKIP_DIRS.has(entry.name)) yield* walk(root, full);
+      if (!SKIP_DIRS.has(entry.name)) yield* walk(root, onError, full);
     } else if (entry.isFile()) {
       yield relative(root, full).split(sep).join('/');
     }
@@ -21,22 +28,26 @@ function* walk(root, dir = root) {
 
 // Copies project files matching `globs` into destDir, keeping relative paths.
 // destDir is emptied first: the agent can write under the run's output folder.
-export function collectArtifacts({ projectDir, globs, destDir, limits = ARTIFACT_LIMITS }) {
+export function collectArtifacts({ projectDir, globs, destDir, limits = ARTIFACT_LIMITS, onError = () => {} }) {
   rmSync(destDir, { recursive: true, force: true });
   const result = { files: 0, bytes: 0, skipped: 0 };
-  for (const rel of walk(projectDir)) {
+  for (const rel of walk(projectDir, onError)) {
     if (!matchesAny(rel, globs)) continue;
     const source = join(projectDir, rel);
-    const size = lstatSync(source).size;
-    if (result.files >= limits.maxFiles || result.bytes + size > limits.maxBytes) {
-      result.skipped++;
-      continue;
+    try {
+      const size = lstatSync(source).size;
+      if (result.files >= limits.maxFiles || result.bytes + size > limits.maxBytes) {
+        result.skipped++;
+        continue;
+      }
+      const target = join(destDir, rel);
+      mkdirSync(dirname(target), { recursive: true });
+      copyFileSync(source, target);
+      result.files++;
+      result.bytes += size;
+    } catch (e) {
+      onError(e);
     }
-    const target = join(destDir, rel);
-    mkdirSync(dirname(target), { recursive: true });
-    copyFileSync(source, target);
-    result.files++;
-    result.bytes += size;
   }
   if (result.skipped > 0) {
     mkdirSync(destDir, { recursive: true });

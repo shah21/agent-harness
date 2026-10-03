@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { collectArtifacts } from '../harness/lib/artifacts.mjs';
@@ -77,4 +77,20 @@ test('no matches → empty result and no TRUNCATED.txt', () => {
   const destDir = dest();
   assert.deepEqual(collectArtifacts({ projectDir, globs: ['report/**'], destDir }), { files: 0, bytes: 0, skipped: 0 });
   assert.equal(existsSync(join(destDir, 'TRUNCATED.txt')), false);
+});
+
+test('skips unreadable directories and keeps going', { skip: process.getuid?.() === 0 && 'root can read anything' }, () => {
+  const projectDir = tree({ 'r/a/x': '1', 'r/b/y': '2' });
+  chmodSync(join(projectDir, 'r/a'), 0o000);
+  const destDir = dest();
+  const errors = [];
+  try {
+    const r = collectArtifacts({ projectDir, globs: ['r/**'], destDir, onError: (e) => errors.push(e) });
+    assert.equal(r.files, 1);
+    assert.equal(existsSync(join(destDir, 'r/b/y')), true);
+    assert.equal(errors.length, 1);
+    assert.match(String(errors[0].message), /r\/a/);
+  } finally {
+    chmodSync(join(projectDir, 'r/a'), 0o755);
+  }
 });
