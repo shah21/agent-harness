@@ -72,6 +72,7 @@ export async function runTask({ projectDir, issue, outDir, baseBranch, configPat
   // A verdict from an earlier run (or one the agent plants) must never be published.
   rmSync(reportPath, { force: true });
   rmSync(verdictPath, { force: true });
+  rmSync(join(outDir, 'artifacts'), { recursive: true, force: true });
 
   const meta = {
     issue: issue.number, issueTitle: issue.title, baseBranch, branch: `agent/issue-${issue.number}`,
@@ -157,6 +158,7 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
     if (!config.setup) return null;
     const r = await runWithTimeout(config.setup, {
       cwd: projectDir, timeoutSec: config.timeouts.setup, logFile: join(logsDir, logName), env: quietEnv,
+      killGroupOnExit: false,
     });
     if (r.timedOut) return `${label} timed out`;
     return r.exitCode === 0 ? null : `${label} failed (exit ${r.exitCode})`;
@@ -167,7 +169,10 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
   const collect = () => {
     if (!config.artifacts.length) return null;
     try {
-      return collectArtifacts({ projectDir, globs: config.artifacts, destDir: join(outDir, 'artifacts') });
+      return collectArtifacts({
+        projectDir, globs: config.artifacts, destDir: join(outDir, 'artifacts'),
+        onError: (e) => appendFileSync(join(logsDir, 'artifacts.log'), `${e.message}\n`),
+      });
     } catch (e) {
       appendFileSync(join(logsDir, 'artifacts.log'), `${e.stack ?? e}\n`);
       return null;
@@ -231,6 +236,9 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
     warnings.push(`usage limit hit on Claude account ${attempt.account}; restarted on account ${accounts[i + 1].account}`);
   }
 
+  // The agent can write under <out>; nothing it put in artifacts/ may be published.
+  rmSync(join(outDir, 'artifacts'), { recursive: true, force: true });
+
   const head = git(projectDir, 'rev-parse', '--abbrev-ref', 'HEAD');
   if (head !== meta.branch) return finish(blocked('gate', `agent switched to branch "${head}"; work must stay on ${meta.branch}`));
 
@@ -248,7 +256,8 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
     // Verify what a clean checkout of the commits would see: drop ignored
     // files the agent may have left (build output, installed packages) and
     // install again from the committed manifests.
-    git(projectDir, 'clean', '-fdXq');
+    // -ff also removes nested repositories, which a single -f skips.
+    git(projectDir, 'clean', '-ffdXq');
     const reinstall = await install('install-verify.log');
     if (installFailed(reinstall)) {
       return finish({ ...blocked('harness', `install before verification failed (exit ${reinstall.exitCode})`), commits, diff, baseSha });

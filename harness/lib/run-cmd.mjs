@@ -10,7 +10,9 @@ function killGroup(pid) {
   }
 }
 
-export function runWithTimeout(command, { cwd, timeoutSec, logFile, env = process.env }) {
+// killGroupOnExit: false lets a command leave background processes running
+// (setup starting services); the group is still killed on timeout.
+export function runWithTimeout(command, { cwd, timeoutSec, logFile, env = process.env, killGroupOnExit = true }) {
   const argv = Array.isArray(command) ? command : ['sh', '-c', command];
   const fd = openSync(logFile, 'a');
   const started = Date.now();
@@ -24,7 +26,7 @@ export function runWithTimeout(command, { cwd, timeoutSec, logFile, env = proces
       if (finished) return;
       finished = true;
       clearTimeout(timer);
-      if (child.pid) killGroup(child.pid);
+      if (child.pid && (killGroupOnExit || timedOut)) killGroup(child.pid);
       closeSync(fd);
       resolve({ exitCode, timedOut, durationSec: Math.round((Date.now() - started) / 1000) });
     };

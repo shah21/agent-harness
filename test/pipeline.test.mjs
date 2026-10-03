@@ -350,3 +350,48 @@ test('without artifact globs nothing is collected', async () => {
   assert.equal(verdict.artifacts, null);
   assert.equal(existsSync(join(outDir, 'artifacts')), false);
 });
+
+test('a background service started by setup survives until the checks run', async () => {
+  const { verdict } = await run({
+    agent: 'honest.sh',
+    mutate: withConfig((cfg) => {
+      cfg.setup = 'mkdir -p build && (sleep 30 &) ; sleep 30 & echo $! > build/service.pid';
+      cfg.checks.test = 'kill -0 "$(cat build/service.pid)" && sh tests/run.sh';
+    }),
+  });
+  assert.equal(verdict.outcome, 'READY_FOR_QA', JSON.stringify(verdict.reasons));
+});
+
+test('a nested git repo planted in an ignored folder is not collected', async () => {
+  const { verdict, outDir } = await run({
+    cmd: `git init -q build/report && echo planted > build/report/evil.txt && sh "${join(AGENTS, 'honest.sh')}"`,
+    mutate: withConfig((cfg) => { cfg.artifacts = ['build/report/**']; }),
+  });
+  assert.equal(verdict.outcome, 'READY_FOR_QA', JSON.stringify(verdict.reasons));
+  assert.equal(existsSync(join(outDir, 'artifacts', 'build', 'report', 'evil.txt')), false);
+  assert.equal(verdict.artifacts.files, 0);
+});
+
+test('a failed agent leaves no artifacts folder behind, even one it wrote', async () => {
+  const { verdict, outDir } = await run({
+    cmd: 'mkdir -p "$(dirname "$REPORT_PATH")/artifacts" && echo fake > "$(dirname "$REPORT_PATH")/artifacts/screenshot.png" && exit 1',
+    mutate: withConfig((cfg) => { cfg.artifacts = ['build/report/**']; }),
+  });
+  assert.equal(verdict.outcome, 'BLOCKED');
+  assert.equal(verdict.artifacts, null);
+  assert.equal(existsSync(join(outDir, 'artifacts')), false);
+});
+
+test('an unreadable folder does not stop collection or change the verdict', async () => {
+  const { verdict, outDir } = await run({
+    agent: 'honest.sh',
+    mutate: withConfig((cfg) => {
+      cfg.artifacts = ['build/report/**'];
+      cfg.checks.test = 'mkdir -p build/report build/zdata && echo ok > build/report/out.txt && chmod 000 build/zdata && sh tests/run.sh';
+    }),
+  });
+  assert.equal(verdict.outcome, 'READY_FOR_QA', JSON.stringify(verdict.reasons));
+  assert.equal(verdict.artifacts.files, 1);
+  assert.equal(existsSync(join(outDir, 'artifacts', 'build', 'report', 'out.txt')), true);
+  assert.match(readFileSync(join(outDir, 'logs', 'artifacts.log'), 'utf8'), /zdata/);
+});

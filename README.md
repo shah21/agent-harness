@@ -19,7 +19,7 @@ Open an issue whose body is `plan: <path>` and `task: <n>`, then add the `agent`
 
 ## Services and artifacts
 
-Checks that need running services (a database, a browser) get them from an optional `setup` command, run after install, before the baseline checks, and again before the harness's own verification — so it must be safe to run twice. A failing or timed-out setup blocks the run as a harness problem. Default timeout `timeouts.setup`: `5m`.
+Checks that need running services (a database, a browser) get them from an optional `setup` command, run after install, before the baseline checks, and again before the harness's own verification — so it must be safe to run twice. Processes it leaves running in the background (containers, a database, a server) keep running for the checks. A failing or timed-out setup blocks the run as a harness problem. Default timeout `timeouts.setup`: `5m`.
 
 `artifacts` lists globs (relative to the project root) whose files are copied into the run artifact after the harness's verification checks (or after a red baseline): test reports, screenshots, traces. Caps: 50 MB and 2,000 files. Symlinks, `.git` and `node_modules` are skipped. Artifacts of public repositories are downloadable by any signed-in GitHub user, so never collect anything secret.
 
