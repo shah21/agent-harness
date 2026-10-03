@@ -30,6 +30,14 @@ export function renderPrompt(template, vars) {
   });
 }
 
+const NO_DEV_SERVERS =
+  "Do not start dev servers or watchers yourself; a check command that starts and stops its own server (for example a test runner's web-server option) is fine.";
+
+// The prompt's process rule; projects with a setup command also learn their services are up.
+export function servicesRule(hasSetup) {
+  return hasSetup ? `Services started by the project's setup command are already running. ${NO_DEV_SERVERS}` : NO_DEV_SERVERS;
+}
+
 const TOKEN_VARS = ['CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN_2'];
 
 // Accounts in the order they are tried; an empty secret means "not configured".
