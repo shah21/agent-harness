@@ -304,3 +304,49 @@ test('setup failing before verification → BLOCKED (harness), commits kept', as
   assert.deepEqual(verdict.reasons, ['setup before verification failed (exit 4)']);
   assert.equal(verdict.commits, 1);
 });
+
+test('artifacts from the verification checks are collected', async () => {
+  const { verdict, outDir } = await run({
+    agent: 'honest.sh',
+    mutate: withConfig((cfg) => {
+      cfg.artifacts = ['build/report/**'];
+      cfg.checks.test = 'mkdir -p build/report && echo "$(date)" > build/report/out.txt && sh tests/run.sh';
+    }),
+  });
+  assert.equal(verdict.outcome, 'READY_FOR_QA', JSON.stringify(verdict.reasons));
+  assert.equal(verdict.artifacts.files, 1);
+  assert.equal(existsSync(join(outDir, 'artifacts', 'build', 'report', 'out.txt')), true);
+});
+
+test('files the agent leaves for collection are not uploaded', async () => {
+  const { verdict, outDir } = await run({
+    cmd: `mkdir -p build/report "$(dirname "$REPORT_PATH")/artifacts" && echo planted > build/report/planted.txt && echo planted > "$(dirname "$REPORT_PATH")/artifacts/planted.txt" && sh "${join(AGENTS, 'honest.sh')}"`,
+    mutate: withConfig((cfg) => { cfg.artifacts = ['build/report/**']; }),
+  });
+  assert.equal(verdict.outcome, 'READY_FOR_QA', JSON.stringify(verdict.reasons));
+  assert.deepEqual(verdict.artifacts, { files: 0, bytes: 0, skipped: 0 });
+  assert.equal(existsSync(join(outDir, 'artifacts', 'build', 'report', 'planted.txt')), false);
+  assert.equal(existsSync(join(outDir, 'artifacts', 'planted.txt')), false);
+});
+
+test('a red base still collects artifacts', async () => {
+  const { verdict, outDir } = await run({
+    cmd: 'touch agent-ran',
+    mutate: (dir, git) => {
+      withConfig((cfg) => {
+        cfg.artifacts = ['build/report/**'];
+        cfg.checks.test = 'mkdir -p build/report && echo red > build/report/out.txt && sh tests/run.sh';
+      })(dir, git);
+      writeFileSync(join(dir, 'value.txt'), '2\n');
+    },
+  });
+  assert.equal(verdict.kind, 'gate');
+  assert.equal(verdict.artifacts.files, 1);
+  assert.equal(readFileSync(join(outDir, 'artifacts', 'build', 'report', 'out.txt'), 'utf8').trim(), 'red');
+});
+
+test('without artifact globs nothing is collected', async () => {
+  const { verdict, outDir } = await run({ agent: 'honest.sh' });
+  assert.equal(verdict.artifacts, null);
+  assert.equal(existsSync(join(outDir, 'artifacts')), false);
+});

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Runs one task locally and writes verdict.json. Network-free: GitHub
 // interaction (select, claim, publish) happens in the workflow around it.
-import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, appendFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -10,6 +10,7 @@ import { loadConfig } from './lib/config.mjs';
 import { parseTaskRef, findTaskHeading } from './lib/issue.mjs';
 import { decide } from './lib/gate.mjs';
 import { runWithTimeout } from './lib/run-cmd.mjs';
+import { collectArtifacts } from './lib/artifacts.mjs';
 import { agentCommand, agentEnv, renderPrompt, claudeTokens, probeCommand, detectUsageLimit, detectAuthFailure, servicesRule } from './lib/agent.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -74,7 +75,7 @@ export async function runTask({ projectDir, issue, outDir, baseBranch, configPat
 
   const meta = {
     issue: issue.number, issueTitle: issue.title, baseBranch, branch: `agent/issue-${issue.number}`,
-    plan: null, task: null, taskTitle: null, model: null, account: null, commits: 0, checks: {}, report: null, reportText: null,
+    plan: null, task: null, taskTitle: null, model: null, account: null, commits: 0, checks: {}, report: null, reportText: null, artifacts: null,
   };
   const finish = (result) => {
     const verdict = { ...meta, ...result };
@@ -161,6 +162,18 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
     return r.exitCode === 0 ? null : `${label} failed (exit ${r.exitCode})`;
   };
 
+  // Evidence from the harness's own check run (test reports, screenshots).
+  // Collection problems are logged and never change the verdict.
+  const collect = () => {
+    if (!config.artifacts.length) return null;
+    try {
+      return collectArtifacts({ projectDir, globs: config.artifacts, destDir: join(outDir, 'artifacts') });
+    } catch (e) {
+      appendFileSync(join(logsDir, 'artifacts.log'), `${e.stack ?? e}\n`);
+      return null;
+    }
+  };
+
   const firstInstall = await install('install.log');
   if (installFailed(firstInstall)) {
     return finish(blocked('harness', firstInstall.timedOut ? 'install timed out' : `install failed (exit ${firstInstall.exitCode})`));
@@ -172,7 +185,7 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
   const baseline = await runChecks(config, projectDir, logsDir, 'baseline', quietEnv);
   const red = Object.entries(baseline).filter(([, c]) => !c.ok).map(([name]) => name);
   if (red.length) {
-    return finish({ ...blocked('gate', `base is red: ${red.join(', ')} failed before the agent started`), checks: baseline });
+    return finish({ ...blocked('gate', `base is red: ${red.join(', ')} failed before the agent started`), checks: baseline, artifacts: collect() });
   }
 
   const baseSha = git(projectDir, 'rev-parse', 'HEAD');
@@ -243,6 +256,7 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
     const verifySetupError = await setup('setup-verify.log', 'setup before verification');
     if (verifySetupError) return finish({ ...blocked('harness', verifySetupError), commits, diff, baseSha });
     checks = await runChecks(config, projectDir, logsDir, 'verify', quietEnv);
+    meta.artifacts = collect();
   }
   const reportText = existsSync(reportPath) ? readFileSync(reportPath, 'utf8') : null;
 
