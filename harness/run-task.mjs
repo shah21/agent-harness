@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Runs one task locally and writes verdict.json. Network-free: GitHub
 // interaction (select, claim, publish) happens in the workflow around it.
-import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, appendFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -10,7 +10,8 @@ import { loadConfig } from './lib/config.mjs';
 import { parseTaskRef, findTaskHeading } from './lib/issue.mjs';
 import { decide } from './lib/gate.mjs';
 import { runWithTimeout } from './lib/run-cmd.mjs';
-import { agentCommand, agentEnv, renderPrompt, claudeTokens, probeCommand, detectUsageLimit, detectAuthFailure } from './lib/agent.mjs';
+import { collectArtifacts } from './lib/artifacts.mjs';
+import { agentCommand, agentEnv, renderPrompt, claudeTokens, probeCommand, detectUsageLimit, detectAuthFailure, servicesRule } from './lib/agent.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -71,10 +72,11 @@ export async function runTask({ projectDir, issue, outDir, baseBranch, configPat
   // A verdict from an earlier run (or one the agent plants) must never be published.
   rmSync(reportPath, { force: true });
   rmSync(verdictPath, { force: true });
+  rmSync(join(outDir, 'artifacts'), { recursive: true, force: true });
 
   const meta = {
     issue: issue.number, issueTitle: issue.title, baseBranch, branch: `agent/issue-${issue.number}`,
-    plan: null, task: null, taskTitle: null, model: null, account: null, commits: 0, checks: {}, report: null, reportText: null,
+    plan: null, task: null, taskTitle: null, model: null, account: null, commits: 0, checks: {}, report: null, reportText: null, artifacts: null,
   };
   const finish = (result) => {
     const verdict = { ...meta, ...result };
@@ -150,15 +152,45 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
     });
   const installFailed = (r) => r.timedOut || r.exitCode !== 0;
 
+  // Setup starts the services checks need (databases, browsers). It must be
+  // idempotent: it runs again before verification in case the agent broke them.
+  const setup = async (logName, label) => {
+    if (!config.setup) return null;
+    const r = await runWithTimeout(config.setup, {
+      cwd: projectDir, timeoutSec: config.timeouts.setup, logFile: join(logsDir, logName), env: quietEnv,
+      killGroupOnExit: false,
+    });
+    if (r.timedOut) return `${label} timed out`;
+    return r.exitCode === 0 ? null : `${label} failed (exit ${r.exitCode})`;
+  };
+
+  // Evidence from the harness's own check run (test reports, screenshots).
+  // Collection problems are logged and never change the verdict.
+  const collect = () => {
+    if (!config.artifacts.length) return null;
+    try {
+      return collectArtifacts({
+        projectDir, globs: config.artifacts, destDir: join(outDir, 'artifacts'),
+        onError: (e) => appendFileSync(join(logsDir, 'artifacts.log'), `${e.message}\n`),
+      });
+    } catch (e) {
+      appendFileSync(join(logsDir, 'artifacts.log'), `${e.stack ?? e}\n`);
+      return null;
+    }
+  };
+
   const firstInstall = await install('install.log');
   if (installFailed(firstInstall)) {
     return finish(blocked('harness', firstInstall.timedOut ? 'install timed out' : `install failed (exit ${firstInstall.exitCode})`));
   }
 
+  const setupError = await setup('setup.log', 'setup');
+  if (setupError) return finish(blocked('harness', setupError));
+
   const baseline = await runChecks(config, projectDir, logsDir, 'baseline', quietEnv);
   const red = Object.entries(baseline).filter(([, c]) => !c.ok).map(([name]) => name);
   if (red.length) {
-    return finish({ ...blocked('gate', `base is red: ${red.join(', ')} failed before the agent started`), checks: baseline });
+    return finish({ ...blocked('gate', `base is red: ${red.join(', ')} failed before the agent started`), checks: baseline, artifacts: collect() });
   }
 
   const baseSha = git(projectDir, 'rev-parse', 'HEAD');
@@ -173,6 +205,7 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
     BRANCH: meta.branch,
     CHECKS: Object.entries(config.checks).map(([name, cmd]) => `   - ${name}: \`${cmd}\``).join('\n'),
     CHECKS_REPORT: Object.keys(config.checks).map((name) => `- ${name}: <PASS|FAIL|NOT_RUN>`).join('\n'),
+    SERVICES_RULE: servicesRule(Boolean(config.setup)),
     PROTECTED: config.protectedPaths.map((p) => `\`${p}\``).join(', '),
   });
   const promptFile = join(outDir, 'prompt.md');
@@ -203,6 +236,9 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
     warnings.push(`usage limit hit on Claude account ${attempt.account}; restarted on account ${accounts[i + 1].account}`);
   }
 
+  // The agent can write under <out>; nothing it put in artifacts/ may be published.
+  rmSync(join(outDir, 'artifacts'), { recursive: true, force: true });
+
   const head = git(projectDir, 'rev-parse', '--abbrev-ref', 'HEAD');
   if (head !== meta.branch) return finish(blocked('gate', `agent switched to branch "${head}"; work must stay on ${meta.branch}`));
 
@@ -220,12 +256,16 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
     // Verify what a clean checkout of the commits would see: drop ignored
     // files the agent may have left (build output, installed packages) and
     // install again from the committed manifests.
-    git(projectDir, 'clean', '-fdXq');
+    // -ff also removes nested repositories, which a single -f skips.
+    git(projectDir, 'clean', '-ffdXq');
     const reinstall = await install('install-verify.log');
     if (installFailed(reinstall)) {
       return finish({ ...blocked('harness', `install before verification failed (exit ${reinstall.exitCode})`), commits, diff, baseSha });
     }
+    const verifySetupError = await setup('setup-verify.log', 'setup before verification');
+    if (verifySetupError) return finish({ ...blocked('harness', verifySetupError), commits, diff, baseSha });
     checks = await runChecks(config, projectDir, logsDir, 'verify', quietEnv);
+    meta.artifacts = collect();
   }
   const reportText = existsSync(reportPath) ? readFileSync(reportPath, 'utf8') : null;
 

@@ -10,6 +10,9 @@ function checkTable(checks) {
 
 const bullets = (items) => items.map((x) => `- ${x}`).join('\n');
 
+const runLink = (v, runUrl) =>
+  `[Run log and artifacts](${runUrl})${v.artifacts?.files ? ` · artifacts collected (${v.artifacts.files} files)` : ''}`;
+
 export function renderPrBody(v) {
   const r = v.report;
   return [
@@ -24,6 +27,7 @@ export function renderPrBody(v) {
     '',
     '## Checks (run by the harness)',
     checkTable(v.checks),
+    ...(v.artifacts?.files ? ['', `Artifacts: ${v.artifacts.files} files collected in the run artifact.`] : []),
     ...(v.warnings.length ? ['', '## Warnings', bullets(v.warnings)] : []),
     '',
     '## Self-review',
@@ -44,7 +48,7 @@ export function renderPrBody(v) {
 
 export function renderComment(v, { runUrl, prUrl } = {}) {
   if (v.outcome === 'READY_FOR_QA') {
-    return `✅ **READY_FOR_QA** — ${prUrl ?? 'PR opened'}\n\n[Run log and artifacts](${runUrl})`;
+    return `✅ **READY_FOR_QA** — ${prUrl ?? 'PR opened'}\n\n${runLink(v, runUrl)}`;
   }
   if (v.outcome === 'WAITING') {
     return [
@@ -54,7 +58,7 @@ export function renderComment(v, { runUrl, prUrl } = {}) {
       '',
       'The queue is paused. A scheduled run resumes it automatically once an account has usage again.',
       '',
-      `[Run log and artifacts](${runUrl})`,
+      runLink(v, runUrl),
     ].join('\n');
   }
   const lines = [`⛔ **BLOCKED** (${v.kind})`, '', bullets(v.reasons)];
@@ -65,6 +69,6 @@ export function renderComment(v, { runUrl, prUrl } = {}) {
   if (v.checks && Object.keys(v.checks).length) lines.push('', checkTable(v.checks));
   if (v.warnings?.length) lines.push('', '**Warnings**', bullets(v.warnings));
   if (v.commits > 0) lines.push('', `The attempt was pushed to \`${v.branch}\` for inspection.`);
-  lines.push('', `[Run log and artifacts](${runUrl})`, '', 'To retry: remove `agent:blocked` and add `agent`.');
+  lines.push('', runLink(v, runUrl), '', 'To retry: remove `agent:blocked` and add `agent`.');
   return lines.join('\n');
 }

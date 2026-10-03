@@ -17,6 +17,21 @@ Design: `docs/superpowers/specs/2026-10-02-agent-harness-design.md`
 
 Open an issue whose body is `plan: <path>` and `task: <n>`, then add the `agent` label (`agent:opus` too for hard tasks). Label several before bed; they run one at a time, ordered by plan then task, and dependent tasks stack on each other's PRs. Retry a blocked task by removing `agent:blocked` and adding `agent`.
 
+## Services and artifacts
+
+Checks that need running services (a database, a browser) get them from an optional `setup` command, run after install, before the baseline checks, and again before the harness's own verification — so it must be safe to run twice. Processes it leaves running in the background (containers, a database, a server) keep running for the checks. A failing or timed-out setup blocks the run as a harness problem. Default timeout `timeouts.setup`: `5m`.
+
+`artifacts` lists globs (relative to the project root) whose files are copied into the run artifact after the harness's verification checks (or after a red baseline): test reports, screenshots, traces. Caps: 50 MB and 2,000 files. Symlinks, `.git` and `node_modules` are skipped. Artifacts of public repositories are downloadable by any signed-in GitHub user, so never collect anything secret.
+
+```json
+{
+  "install": "pnpm install --frozen-lockfile",
+  "setup": "docker compose -f docker-compose.test.yml up -d --wait && pnpm db:push:test",
+  "checks": { "test": "pnpm test", "e2e": "pnpm exec playwright test" },
+  "artifacts": ["playwright-report/**", "test-results/**"]
+}
+```
+
 ## Usage limits and a second account
 
 Before any work, each run tries every configured account with one cheap turn. If an account runs out of usage mid-task, the attempt is discarded and the task restarts on the next account. Set the optional secret `CLAUDE_CODE_OAUTH_TOKEN_2` to add a second account. When every account is out, the issue is labelled `agent:waiting`, the queue pauses, and the scheduled trigger in `agent.yml` resumes it.

@@ -240,3 +240,158 @@ test('an explicit configPath wins over the stale config on the base branch', asy
   });
   assert.equal(verdict.outcome, 'READY_FOR_QA', JSON.stringify(verdict.reasons));
 });
+
+function withConfig(change) {
+  return (dir) => {
+    const cfg = JSON.parse(readFileSync(join(dir, 'agent.config.json'), 'utf8'));
+    change(cfg);
+    writeFileSync(join(dir, 'agent.config.json'), JSON.stringify(cfg));
+  };
+}
+
+test('setup runs before the baseline and again before verification', async () => {
+  // build/ is git-ignored, so the post-agent clean deletes the marker: verification
+  // only passes if setup recreated it.
+  const { verdict, outDir } = await run({
+    agent: 'honest.sh',
+    mutate: withConfig((cfg) => {
+      cfg.setup = 'mkdir -p build && echo up > build/services && echo ran';
+      cfg.checks.test = 'test -f build/services && sh tests/run.sh';
+    }),
+  });
+  assert.equal(verdict.outcome, 'READY_FOR_QA', JSON.stringify(verdict.reasons));
+  assert.match(readFileSync(join(outDir, 'logs', 'setup.log'), 'utf8'), /ran/);
+  assert.match(readFileSync(join(outDir, 'logs', 'setup-verify.log'), 'utf8'), /ran/);
+  assert.match(readFileSync(join(outDir, 'prompt.md'), 'utf8'), /Services started by the project's setup command are already running/);
+});
+
+test('a project without setup runs no setup step', async () => {
+  const { verdict, outDir } = await run({ agent: 'honest.sh' });
+  assert.equal(verdict.outcome, 'READY_FOR_QA', JSON.stringify(verdict.reasons));
+  assert.equal(existsSync(join(outDir, 'logs', 'setup.log')), false);
+  assert.doesNotMatch(readFileSync(join(outDir, 'prompt.md'), 'utf8'), /setup command/);
+});
+
+test('failing setup → BLOCKED (harness) before the agent runs', async () => {
+  const { verdict, projectDir } = await run({
+    cmd: 'touch agent-ran',
+    mutate: withConfig((cfg) => { cfg.setup = 'exit 3'; }),
+  });
+  assert.equal(verdict.outcome, 'BLOCKED');
+  assert.equal(verdict.kind, 'harness');
+  assert.deepEqual(verdict.reasons, ['setup failed (exit 3)']);
+  assert.equal(existsSync(join(projectDir, 'agent-ran')), false);
+});
+
+test('setup timeout → BLOCKED (harness)', async () => {
+  const { verdict } = await run({
+    cmd: 'touch agent-ran',
+    mutate: withConfig((cfg) => { cfg.setup = 'sleep 5'; cfg.timeouts.setup = '1s'; }),
+  });
+  assert.deepEqual(verdict.reasons, ['setup timed out']);
+});
+
+test('setup failing before verification → BLOCKED (harness), commits kept', async () => {
+  const mark = join(mkdtempSync(join(tmpdir(), 'harness-mark-')), 'once');
+  const { verdict } = await run({
+    agent: 'honest.sh',
+    mutate: withConfig((cfg) => {
+      cfg.env = { SETUP_MARK: mark };
+      cfg.setup = 'if [ -f "$SETUP_MARK" ]; then exit 4; fi; touch "$SETUP_MARK"';
+    }),
+  });
+  assert.equal(verdict.kind, 'harness');
+  assert.deepEqual(verdict.reasons, ['setup before verification failed (exit 4)']);
+  assert.equal(verdict.commits, 1);
+});
+
+test('artifacts from the verification checks are collected', async () => {
+  const { verdict, outDir } = await run({
+    agent: 'honest.sh',
+    mutate: withConfig((cfg) => {
+      cfg.artifacts = ['build/report/**'];
+      cfg.checks.test = 'mkdir -p build/report && echo "$(date)" > build/report/out.txt && sh tests/run.sh';
+    }),
+  });
+  assert.equal(verdict.outcome, 'READY_FOR_QA', JSON.stringify(verdict.reasons));
+  assert.equal(verdict.artifacts.files, 1);
+  assert.equal(existsSync(join(outDir, 'artifacts', 'build', 'report', 'out.txt')), true);
+});
+
+test('files the agent leaves for collection are not uploaded', async () => {
+  const { verdict, outDir } = await run({
+    cmd: `mkdir -p build/report "$(dirname "$REPORT_PATH")/artifacts" && echo planted > build/report/planted.txt && echo planted > "$(dirname "$REPORT_PATH")/artifacts/planted.txt" && sh "${join(AGENTS, 'honest.sh')}"`,
+    mutate: withConfig((cfg) => { cfg.artifacts = ['build/report/**']; }),
+  });
+  assert.equal(verdict.outcome, 'READY_FOR_QA', JSON.stringify(verdict.reasons));
+  assert.deepEqual(verdict.artifacts, { files: 0, bytes: 0, skipped: 0 });
+  assert.equal(existsSync(join(outDir, 'artifacts', 'build', 'report', 'planted.txt')), false);
+  assert.equal(existsSync(join(outDir, 'artifacts', 'planted.txt')), false);
+});
+
+test('a red base still collects artifacts', async () => {
+  const { verdict, outDir } = await run({
+    cmd: 'touch agent-ran',
+    mutate: (dir, git) => {
+      withConfig((cfg) => {
+        cfg.artifacts = ['build/report/**'];
+        cfg.checks.test = 'mkdir -p build/report && echo red > build/report/out.txt && sh tests/run.sh';
+      })(dir, git);
+      writeFileSync(join(dir, 'value.txt'), '2\n');
+    },
+  });
+  assert.equal(verdict.kind, 'gate');
+  assert.equal(verdict.artifacts.files, 1);
+  assert.equal(readFileSync(join(outDir, 'artifacts', 'build', 'report', 'out.txt'), 'utf8').trim(), 'red');
+});
+
+test('without artifact globs nothing is collected', async () => {
+  const { verdict, outDir } = await run({ agent: 'honest.sh' });
+  assert.equal(verdict.artifacts, null);
+  assert.equal(existsSync(join(outDir, 'artifacts')), false);
+});
+
+test('a background service started by setup survives until the checks run', async () => {
+  const { verdict } = await run({
+    agent: 'honest.sh',
+    mutate: withConfig((cfg) => {
+      cfg.setup = 'mkdir -p build && (sleep 30 &) ; sleep 30 & echo $! > build/service.pid';
+      cfg.checks.test = 'kill -0 "$(cat build/service.pid)" && sh tests/run.sh';
+    }),
+  });
+  assert.equal(verdict.outcome, 'READY_FOR_QA', JSON.stringify(verdict.reasons));
+});
+
+test('a nested git repo planted in an ignored folder is not collected', async () => {
+  const { verdict, outDir } = await run({
+    cmd: `git init -q build/report && echo planted > build/report/evil.txt && sh "${join(AGENTS, 'honest.sh')}"`,
+    mutate: withConfig((cfg) => { cfg.artifacts = ['build/report/**']; }),
+  });
+  assert.equal(verdict.outcome, 'READY_FOR_QA', JSON.stringify(verdict.reasons));
+  assert.equal(existsSync(join(outDir, 'artifacts', 'build', 'report', 'evil.txt')), false);
+  assert.equal(verdict.artifacts.files, 0);
+});
+
+test('a failed agent leaves no artifacts folder behind, even one it wrote', async () => {
+  const { verdict, outDir } = await run({
+    cmd: 'mkdir -p "$(dirname "$REPORT_PATH")/artifacts" && echo fake > "$(dirname "$REPORT_PATH")/artifacts/screenshot.png" && exit 1',
+    mutate: withConfig((cfg) => { cfg.artifacts = ['build/report/**']; }),
+  });
+  assert.equal(verdict.outcome, 'BLOCKED');
+  assert.equal(verdict.artifacts, null);
+  assert.equal(existsSync(join(outDir, 'artifacts')), false);
+});
+
+test('an unreadable folder does not stop collection or change the verdict', async () => {
+  const { verdict, outDir } = await run({
+    agent: 'honest.sh',
+    mutate: withConfig((cfg) => {
+      cfg.artifacts = ['build/report/**'];
+      cfg.checks.test = 'mkdir -p build/report build/zdata && echo ok > build/report/out.txt && chmod 000 build/zdata && sh tests/run.sh';
+    }),
+  });
+  assert.equal(verdict.outcome, 'READY_FOR_QA', JSON.stringify(verdict.reasons));
+  assert.equal(verdict.artifacts.files, 1);
+  assert.equal(existsSync(join(outDir, 'artifacts', 'build', 'report', 'out.txt')), true);
+  assert.match(readFileSync(join(outDir, 'logs', 'artifacts.log'), 'utf8'), /zdata/);
+});

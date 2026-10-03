@@ -2,7 +2,7 @@ const ALWAYS_PROTECTED = ['.github/**', 'agent.config.json'];
 const DEFAULTS = {
   model: 'sonnet',
   maxTurns: 150,
-  timeouts: { install: '15m', claude: '45m', check: '10m' },
+  timeouts: { install: '15m', claude: '45m', check: '10m', setup: '5m' },
   testGlobs: ['**/*.test.ts', '**/*.test.tsx', '**/*.spec.ts', 'e2e/**'],
 };
 
@@ -36,6 +36,17 @@ function stringArray(value, field) {
   return value;
 }
 
+// Globs are matched against project-relative paths, so they must stay inside the project.
+function artifactGlobs(value) {
+  const globs = stringArray(value, 'artifacts');
+  for (const g of globs) {
+    if (!g || g.startsWith('/') || g.split('/').includes('..')) {
+      throw new Error(`artifact glob "${g}" must be a relative path inside the project`);
+    }
+  }
+  return globs;
+}
+
 export function loadConfig(text) {
   let raw;
   try {
@@ -60,11 +71,21 @@ export function loadConfig(text) {
   const maxTurns = raw.maxTurns ?? DEFAULTS.maxTurns;
   if (!Number.isInteger(maxTurns) || maxTurns < 1) throw new Error('"maxTurns" must be a positive integer');
 
+  if (raw.setup !== undefined && (typeof raw.setup !== 'string' || !raw.setup.trim())) {
+    throw new Error('"setup" must be a non-empty command string');
+  }
+
   const t = { ...DEFAULTS.timeouts, ...(raw.timeouts ?? {}) };
-  const timeouts = { install: parseDuration(t.install), claude: parseDuration(t.claude), check: parseDuration(t.check) };
+  const timeouts = {
+    install: parseDuration(t.install),
+    claude: parseDuration(t.claude),
+    check: parseDuration(t.check),
+    setup: parseDuration(t.setup),
+  };
 
   return {
     install: raw.install,
+    setup: raw.setup ?? null,
     checks: { ...checks },
     model,
     maxTurns,
@@ -72,5 +93,6 @@ export function loadConfig(text) {
     protectedPaths: [...new Set([...ALWAYS_PROTECTED, ...stringArray(raw.protectedPaths, 'protectedPaths')])],
     testGlobs: raw.testGlobs === undefined ? DEFAULTS.testGlobs : stringArray(raw.testGlobs, 'testGlobs'),
     env: envMap(raw.env),
+    artifacts: artifactGlobs(raw.artifacts),
   };
 }
