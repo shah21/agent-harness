@@ -107,6 +107,8 @@ JSON rather than YAML so the harness needs no parser dependency.
 
 Only `install` and `checks` are required; the rest have the defaults shown. `.github/**` and `agent.config.json` are always protected, even if omitted.
 
+Optional `setup` (command) and `artifacts` (globs), plus `timeouts.setup`, are specified in `2026-10-02-setup-and-artifacts-design.md`.
+
 ## 6. Run flow
 
 The caller workflow triggers on `issues: labeled` (label `agent`) and on `workflow_dispatch`. Each run processes **exactly one** task: the oldest queued issue, ordered by plan then task number.
@@ -119,7 +121,7 @@ Steps (each with a timeout; any harness-step failure → `BLOCKED (harness)`):
 2. **Parse.** Validate the issue body (§4).
 3. **Upstream check.** If an open issue for the same plan with a lower task number carries `agent:blocked` → `BLOCKED: upstream task N blocked`, skip.
 4. **Choose base (stacking).** Base = head branch of the open agent PR for the same plan with the highest task number below this one; else the default branch. The PR targets that base, so its diff contains only this task.
-5. **Prepare.** Checkout project at base with `persist-credentials: false`; create branch `agent/issue-<n>`; configure a git identity; run `install`.
+5. **Prepare.** Checkout project at base with `persist-credentials: false`; create branch `agent/issue-<n>`; configure a git identity; run `install`. Then run `setup` if configured (again before step 8).
 6. **Baseline.** Run all checks before Claude starts. Any failure → `BLOCKED: base is red` (names the failing check). Claude does not run.
 7. **Agent.** Run Claude Code CLI headless:
    `timeout <claude> claude -p "<prompt.md + task reference + report path>" --model <model> --max-turns <maxTurns> --allowedTools "Read,Edit,Write,Glob,Grep,Bash"`
@@ -129,7 +131,7 @@ Steps (each with a timeout; any harness-step failure → `BLOCKED (harness)`):
 10. **Publish.** Using `GITHUB_TOKEN` (never exposed to step 7):
     - `READY_FOR_QA` → push branch, open PR titled `Task <n>: <task title>` with report, real check results and `Closes #<issue>`; label `agent:ready`.
     - `BLOCKED` → comment with blocker, evidence, required action and run link; push the branch only if it has commits; label `agent:blocked`.
-11. **Artifacts.** Always upload `report.md`, check logs, and the Claude transcript.
+11. **Artifacts.** Always upload `report.md`, check logs, and the Claude transcript. Plus files matching the project's `artifacts` globs.
 12. **Continue.** Re-dispatch if queued issues remain.
 
 The `publish` job runs whenever an issue was selected, even if `run` failed or timed out, and `publish.sh` traps its own errors to still label and comment. **The author never wakes up to silence.**
