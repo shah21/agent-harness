@@ -46,7 +46,8 @@ Current flow: install → baseline checks → agent → clean + reinstall → ve
 
 ## 4. Artifact collection
 
-- Runs once, after the last check phase that ran — after verify checks, or after baseline checks when the base is red. A run that stops earlier (bad config, install or setup failure, no usable account) collects nothing.
+- Runs once: after the verify checks, or after the baseline checks when the base is red. Nothing is collected in any other case — including when the agent fails or times out, because files left at that point may have been written by the agent.
+- The harness empties `<out>/artifacts` before copying, since the agent can write inside `<out>`.
 - Because step 5 cleans the working tree, files written by the agent itself are gone before verify; what is collected was produced by the harness's own check run, not the agent.
 - Walks the project tree, skipping `.git` and `node_modules`, and copies each file matching any glob to `<out>/artifacts/<same relative path>`. The workflow already uploads `<out>` as `agent-run-issue-<n>`, so the workflow does not change.
 - **Caps:** at most 50 MB in total and 2,000 files. Beyond either cap, remaining files are skipped and `artifacts/TRUNCATED.txt` lists how many were skipped and why. Symlinks are not followed.
