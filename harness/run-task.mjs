@@ -10,7 +10,7 @@ import { loadConfig } from './lib/config.mjs';
 import { parseTaskRef, findTaskHeading } from './lib/issue.mjs';
 import { decide } from './lib/gate.mjs';
 import { runWithTimeout } from './lib/run-cmd.mjs';
-import { agentCommand, agentEnv, renderPrompt, claudeTokens, probeCommand, detectUsageLimit, detectAuthFailure } from './lib/agent.mjs';
+import { agentCommand, agentEnv, renderPrompt, claudeTokens, probeCommand, detectUsageLimit, detectAuthFailure, servicesRule } from './lib/agent.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -150,10 +150,24 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
     });
   const installFailed = (r) => r.timedOut || r.exitCode !== 0;
 
+  // Setup starts the services checks need (databases, browsers). It must be
+  // idempotent: it runs again before verification in case the agent broke them.
+  const setup = async (logName, label) => {
+    if (!config.setup) return null;
+    const r = await runWithTimeout(config.setup, {
+      cwd: projectDir, timeoutSec: config.timeouts.setup, logFile: join(logsDir, logName), env: quietEnv,
+    });
+    if (r.timedOut) return `${label} timed out`;
+    return r.exitCode === 0 ? null : `${label} failed (exit ${r.exitCode})`;
+  };
+
   const firstInstall = await install('install.log');
   if (installFailed(firstInstall)) {
     return finish(blocked('harness', firstInstall.timedOut ? 'install timed out' : `install failed (exit ${firstInstall.exitCode})`));
   }
+
+  const setupError = await setup('setup.log', 'setup');
+  if (setupError) return finish(blocked('harness', setupError));
 
   const baseline = await runChecks(config, projectDir, logsDir, 'baseline', quietEnv);
   const red = Object.entries(baseline).filter(([, c]) => !c.ok).map(([name]) => name);
@@ -173,6 +187,7 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
     BRANCH: meta.branch,
     CHECKS: Object.entries(config.checks).map(([name, cmd]) => `   - ${name}: \`${cmd}\``).join('\n'),
     CHECKS_REPORT: Object.keys(config.checks).map((name) => `- ${name}: <PASS|FAIL|NOT_RUN>`).join('\n'),
+    SERVICES_RULE: servicesRule(Boolean(config.setup)),
     PROTECTED: config.protectedPaths.map((p) => `\`${p}\``).join(', '),
   });
   const promptFile = join(outDir, 'prompt.md');
@@ -225,6 +240,8 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
     if (installFailed(reinstall)) {
       return finish({ ...blocked('harness', `install before verification failed (exit ${reinstall.exitCode})`), commits, diff, baseSha });
     }
+    const verifySetupError = await setup('setup-verify.log', 'setup before verification');
+    if (verifySetupError) return finish({ ...blocked('harness', verifySetupError), commits, diff, baseSha });
     checks = await runChecks(config, projectDir, logsDir, 'verify', quietEnv);
   }
   const reportText = existsSync(reportPath) ? readFileSync(reportPath, 'utf8') : null;

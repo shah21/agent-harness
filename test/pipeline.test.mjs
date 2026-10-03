@@ -240,3 +240,67 @@ test('an explicit configPath wins over the stale config on the base branch', asy
   });
   assert.equal(verdict.outcome, 'READY_FOR_QA', JSON.stringify(verdict.reasons));
 });
+
+function withConfig(change) {
+  return (dir) => {
+    const cfg = JSON.parse(readFileSync(join(dir, 'agent.config.json'), 'utf8'));
+    change(cfg);
+    writeFileSync(join(dir, 'agent.config.json'), JSON.stringify(cfg));
+  };
+}
+
+test('setup runs before the baseline and again before verification', async () => {
+  // build/ is git-ignored, so the post-agent clean deletes the marker: verification
+  // only passes if setup recreated it.
+  const { verdict, outDir } = await run({
+    agent: 'honest.sh',
+    mutate: withConfig((cfg) => {
+      cfg.setup = 'mkdir -p build && echo up > build/services && echo ran';
+      cfg.checks.test = 'test -f build/services && sh tests/run.sh';
+    }),
+  });
+  assert.equal(verdict.outcome, 'READY_FOR_QA', JSON.stringify(verdict.reasons));
+  assert.match(readFileSync(join(outDir, 'logs', 'setup.log'), 'utf8'), /ran/);
+  assert.match(readFileSync(join(outDir, 'logs', 'setup-verify.log'), 'utf8'), /ran/);
+  assert.match(readFileSync(join(outDir, 'prompt.md'), 'utf8'), /Services started by the project's setup command are already running/);
+});
+
+test('a project without setup runs no setup step', async () => {
+  const { verdict, outDir } = await run({ agent: 'honest.sh' });
+  assert.equal(verdict.outcome, 'READY_FOR_QA', JSON.stringify(verdict.reasons));
+  assert.equal(existsSync(join(outDir, 'logs', 'setup.log')), false);
+  assert.doesNotMatch(readFileSync(join(outDir, 'prompt.md'), 'utf8'), /setup command/);
+});
+
+test('failing setup → BLOCKED (harness) before the agent runs', async () => {
+  const { verdict, projectDir } = await run({
+    cmd: 'touch agent-ran',
+    mutate: withConfig((cfg) => { cfg.setup = 'exit 3'; }),
+  });
+  assert.equal(verdict.outcome, 'BLOCKED');
+  assert.equal(verdict.kind, 'harness');
+  assert.deepEqual(verdict.reasons, ['setup failed (exit 3)']);
+  assert.equal(existsSync(join(projectDir, 'agent-ran')), false);
+});
+
+test('setup timeout → BLOCKED (harness)', async () => {
+  const { verdict } = await run({
+    cmd: 'touch agent-ran',
+    mutate: withConfig((cfg) => { cfg.setup = 'sleep 5'; cfg.timeouts.setup = '1s'; }),
+  });
+  assert.deepEqual(verdict.reasons, ['setup timed out']);
+});
+
+test('setup failing before verification → BLOCKED (harness), commits kept', async () => {
+  const mark = join(mkdtempSync(join(tmpdir(), 'harness-mark-')), 'once');
+  const { verdict } = await run({
+    agent: 'honest.sh',
+    mutate: withConfig((cfg) => {
+      cfg.env = { SETUP_MARK: mark };
+      cfg.setup = 'if [ -f "$SETUP_MARK" ]; then exit 4; fi; touch "$SETUP_MARK"';
+    }),
+  });
+  assert.equal(verdict.kind, 'harness');
+  assert.deepEqual(verdict.reasons, ['setup before verification failed (exit 4)']);
+  assert.equal(verdict.commits, 1);
+});
