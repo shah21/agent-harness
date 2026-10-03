@@ -57,3 +57,16 @@ test('waiting comment explains the pause and automatic resume', () => {
   assert.match(c, /resume/i);
   assert.doesNotMatch(c, /To retry/);
 });
+
+test('collected artifacts are mentioned in the comment and the PR body', () => {
+  const v = { ...readyVerdict, artifacts: { files: 3, bytes: 100, skipped: 0 } };
+  assert.match(renderComment(v, { runUrl: 'https://run', prUrl: 'https://pr' }), /\[Run log and artifacts\]\(https:\/\/run\) · artifacts collected \(3 files\)/);
+  assert.match(renderPrBody(v), /Artifacts: 3 files collected in the run artifact\./);
+  const blockedV = { ...v, outcome: 'BLOCKED', kind: 'gate', reasons: ['x'], report: null, commits: 0 };
+  assert.match(renderComment(blockedV, { runUrl: 'https://run' }), /artifacts collected \(3 files\)/);
+});
+
+test('no artifacts → no artifacts line', () => {
+  assert.doesNotMatch(renderComment(readyVerdict, { runUrl: 'https://run', prUrl: 'https://pr' }), /artifacts collected/);
+  assert.doesNotMatch(renderPrBody({ ...readyVerdict, artifacts: { files: 0, bytes: 0, skipped: 0 } }), /Artifacts:/);
+});

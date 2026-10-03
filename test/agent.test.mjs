@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { agentEnv, agentCommand, renderPrompt, ALLOWED_TOOLS, claudeTokens, probeCommand, detectUsageLimit, detectAuthFailure } from '../harness/lib/agent.mjs';
+import { agentEnv, agentCommand, renderPrompt, ALLOWED_TOOLS, claudeTokens, probeCommand, detectUsageLimit, detectAuthFailure, servicesRule } from '../harness/lib/agent.mjs';
 
 test('agentEnv keeps only allowlisted variables plus extras', () => {
   const env = agentEnv(
@@ -34,6 +34,7 @@ test('the shipped prompt uses only the documented variables', () => {
   const out = renderPrompt(template, {
     ISSUE: 7, PLAN: 'docs/p.md', TASK: 1, TASK_TITLE: 'Add greeting', REPORT_PATH: '/tmp/report.md',
     BRANCH: 'agent/issue-7', CHECKS: '- test: `npm test`', CHECKS_REPORT: '- test: PASS', PROTECTED: '`.github/**`',
+    SERVICES_RULE: servicesRule(false),
   });
   assert.match(out, /\/tmp\/report\.md/);
   assert.match(out, /^CHECKS:\n- test: PASS$/m);
@@ -71,4 +72,10 @@ test('detectAuthFailure matches 401 errors', () => {
   assert.equal(detectAuthFailure('{"error":"authentication_failed"}'), true);
   assert.equal(detectAuthFailure('API Error: 401 Invalid bearer token'), true);
   assert.equal(detectAuthFailure('all good'), false);
+});
+
+test('servicesRule mentions running services only when the project has setup', () => {
+  assert.match(servicesRule(true), /^Services started by the project's setup command are already running\. Do not start dev servers/);
+  assert.match(servicesRule(false), /^Do not start dev servers or watchers yourself; a check command that starts and stops its own server/);
+  assert.doesNotMatch(servicesRule(false), /setup command/);
 });
