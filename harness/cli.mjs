@@ -4,13 +4,15 @@ import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { selectNext } from './lib/queue.mjs';
 import { renderPrBody, renderComment } from './lib/format.mjs';
+import { issueToClose } from './lib/merged.mjs';
 
 const USAGE = `usage:
   cli.mjs select --issues <f> --prs <f> --default-branch <b>
   cli.mjs skip-verdict --selection <f>
   cli.mjs fallback-verdict --selection <f>
   cli.mjs render-pr --verdict <f>
-  cli.mjs render-comment --verdict <f> --run-url <u> [--pr-url <u>]`;
+  cli.mjs render-comment --verdict <f> --run-url <u> [--pr-url <u>]
+  cli.mjs merged-issue --event <f>`;
 
 const read = (f) => JSON.parse(readFileSync(f, 'utf8'));
 const print = (obj) => process.stdout.write(`${JSON.stringify(obj, null, 2)}\n`);
@@ -32,7 +34,7 @@ try {
     args: rest,
     options: {
       issues: { type: 'string' }, prs: { type: 'string' }, 'default-branch': { type: 'string' },
-      selection: { type: 'string' }, verdict: { type: 'string' },
+      selection: { type: 'string' }, verdict: { type: 'string' }, event: { type: 'string' },
       'run-url': { type: 'string' }, 'pr-url': { type: 'string' },
     },
   }));
@@ -59,6 +61,11 @@ switch (command) {
   case 'render-comment':
     process.stdout.write(renderComment(read(values.verdict), { runUrl: values['run-url'], prUrl: values['pr-url'] }));
     break;
+  case 'merged-issue': {
+    const issue = issueToClose(read(values.event));
+    process.stdout.write(issue === null ? '' : `${issue}\n`);
+    break;
+  }
   default:
     console.error(USAGE);
     process.exit(2);

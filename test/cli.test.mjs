@@ -52,3 +52,9 @@ test('unknown command exits 2', () => {
   assert.equal(r.status, 2);
   assert.match(r.stderr, /usage/);
 });
+
+test('merged-issue prints the issue number for a merged agent PR and nothing otherwise', () => {
+  const ev = (over) => file('event.json', { pull_request: { merged: true, head: { ref: 'agent/issue-12', repo: { full_name: 'o/r' } }, base: { ref: 'main', repo: { full_name: 'o/r' } }, body: '<!-- agent-task plan=docs/p.md task=2 issue=12 -->', ...over } });
+  assert.equal(cli('merged-issue', '--event', ev({})).trim(), '12');
+  assert.equal(cli('merged-issue', '--event', ev({ merged: false })).trim(), '');
+});
