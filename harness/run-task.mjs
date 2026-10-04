@@ -11,6 +11,7 @@ import { parseTaskRef, findTaskHeading } from './lib/issue.mjs';
 import { decide } from './lib/gate.mjs';
 import { runWithTimeout } from './lib/run-cmd.mjs';
 import { tailLog } from './lib/tail.mjs';
+import { parsePlanTask, comparePlan, conformanceWarnings } from './lib/conformance.mjs';
 import { collectArtifacts } from './lib/artifacts.mjs';
 import { agentCommand, agentEnv, renderPrompt, claudeTokens, probeCommand, detectUsageLimit, detectAuthFailure, servicesRule } from './lib/agent.mjs';
 
@@ -136,7 +137,9 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
   meta.task = ref.task;
   const planPath = join(projectDir, ref.plan);
   if (!existsSync(planPath)) return finish(blocked('gate', `bad task reference: plan file not found: ${ref.plan}`));
-  meta.taskTitle = findTaskHeading(readFileSync(planPath, 'utf8'), ref.task);
+  // Read before the agent runs, so conformance is judged against the plan it was given.
+  const planText = readFileSync(planPath, 'utf8');
+  meta.taskTitle = findTaskHeading(planText, ref.task);
   if (!meta.taskTitle) return finish(blocked('gate', `bad task reference: no "Task ${ref.task}:" heading in ${ref.plan}`));
   meta.model = issue.labels.includes('agent:opus') ? 'opus' : config.model;
 
@@ -285,9 +288,18 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
   const reportText = existsSync(reportPath) ? readFileSync(reportPath, 'utf8') : null;
 
   const decision = decide({ agent, reportText, commits, diff, checks, config });
+  const readAtHead = (path) => {
+    try {
+      return execFileSync('git', ['show', `HEAD:${path}`], { cwd: projectDir, encoding: 'utf8' });
+    } catch {
+      return null;
+    }
+  };
+  const conformance = diff.length ? comparePlan(parsePlanTask(planText, ref.task), diff, readAtHead) : null;
   return finish({
     ...decision,
-    warnings: [...warnings, ...decision.warnings],
+    ...(conformance ? { conformance } : {}),
+    warnings: [...warnings, ...decision.warnings, ...(conformance ? conformanceWarnings(conformance) : [])],
     report: decision.report ?? null,
     reportText,
     commits,
