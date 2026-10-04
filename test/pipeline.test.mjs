@@ -128,6 +128,42 @@ test('red base → the failing check\'s output is captured in the verdict', asyn
   assert.equal(verdict.checks.lint.tail, undefined, 'passing checks carry no tail');
 });
 
+const F = '```';
+const planWith = (files, blocks) => ['# Plan', '', '## Task 1: Add greeting', '', '**Files:**', ...files, '', ...blocks].join('\n');
+const greetingBlocks = [
+  'Create `greeting.txt`:', '', F, 'hello', F, '',
+  'Create `tests/greeting.test.sh`:', '', `${F}sh`, 'test "$(cat greeting.txt)" = "hello"', F, '',
+];
+
+test('plan conformance: an agent that follows the plan exactly is reported as identical', async () => {
+  const { verdict } = await run({
+    agent: 'honest.sh',
+    mutate: (dir) => writeFileSync(join(dir, 'docs/plan.md'), planWith(['- Create: `greeting.txt`', '- Test: `tests/greeting.test.sh`'], greetingBlocks)),
+  });
+  assert.equal(verdict.outcome, 'READY_FOR_QA');
+  assert.deepEqual(verdict.conformance.identical.sort(), ['greeting.txt', 'tests/greeting.test.sh']);
+  assert.deepEqual(verdict.conformance.differs, []);
+  assert.deepEqual(verdict.warnings, []);
+});
+
+test('plan conformance: files outside the plan and code that differs become warnings, not a block', async () => {
+  const { verdict } = await run({
+    agent: 'honest.sh',
+    mutate: (dir) => writeFileSync(join(dir, 'docs/plan.md'), planWith(['- Create: `greeting.txt`'], ['Create `greeting.txt`:', '', F, 'goodbye', F, ''])),
+  });
+  assert.equal(verdict.outcome, 'READY_FOR_QA');
+  assert.deepEqual(verdict.conformance.differs, ['greeting.txt']);
+  assert.deepEqual(verdict.conformance.unexpected, ['tests/greeting.test.sh']);
+  assert.match(verdict.warnings.join('\n'), /differ from the plan's code: greeting\.txt/);
+  assert.match(verdict.warnings.join('\n'), /not listed in the plan: tests\/greeting\.test\.sh/);
+});
+
+test('plan conformance: a plan task without a Files list adds nothing', async () => {
+  const { verdict } = await run({ agent: 'honest.sh' });
+  assert.equal(verdict.outcome, 'READY_FOR_QA');
+  assert.equal(verdict.conformance, undefined);
+});
+
 test('unknown task number → bad task reference', async () => {
   const { verdict } = await run({ agent: 'honest.sh', issue: { ...ISSUE, body: 'plan: docs/plan.md\ntask: 9' } });
   assert.equal(verdict.kind, 'gate');
