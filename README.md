@@ -27,6 +27,13 @@ A stacked PR targets the previous task's branch, not the default branch, and two
 
 Merge bottom-up: merge the lowest PR, retarget the next one to the default branch (`gh pr edit <n> --base main`), merge it, and repeat up the stack. Delete the branches only after the whole stack is merged, so don't use "delete branch on merge" or `gh pr merge --delete-branch` until then.
 
+`harness/merge-stack.mjs` does exactly this with `gh`:
+
+    node harness/merge-stack.mjs --repo owner/name          # lists the order, changes nothing
+    node harness/merge-stack.mjs --repo owner/name --yes    # merges
+
+It finds open `agent/issue-<n>` PRs by their marker, orders each plan's PRs by task, retargets each one to the default branch just before merging it, waits for GitHub to compute mergeability and for checks, and deletes the branches only after the last merge. It stops at the first draft, conflict or failing check, leaving earlier merges in place and deleting nothing.
+
 ## Services and artifacts
 
 Checks that need running services (a database, a browser) get them from an optional `setup` command, run after install, before the baseline checks, and again before the harness's own verification — so it must be safe to run twice. Processes it leaves running in the background (containers, a database, a server) keep running for the checks. A failing or timed-out setup blocks the run as a harness problem. Default timeout `timeouts.setup`: `5m`.
