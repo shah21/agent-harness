@@ -2,7 +2,7 @@
 // removed, line endings normalised, size capped at a line boundary.
 const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
 
-export function tailLog(text, { lines = 30, maxChars = 3000 } = {}) {
+export function tailLog(text, { lines = 60, maxChars = 6000 } = {}) {
   const all = String(text).replace(ANSI, '').replace(/\r\n?/g, '\n').split('\n');
   while (all.length && all[all.length - 1].trim() === '') all.pop();
   let out = all.slice(-lines).join('\n');
