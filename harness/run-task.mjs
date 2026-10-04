@@ -10,6 +10,7 @@ import { loadConfig } from './lib/config.mjs';
 import { parseTaskRef, findTaskHeading } from './lib/issue.mjs';
 import { decide } from './lib/gate.mjs';
 import { runWithTimeout } from './lib/run-cmd.mjs';
+import { tailLog } from './lib/tail.mjs';
 import { collectArtifacts } from './lib/artifacts.mjs';
 import { agentCommand, agentEnv, renderPrompt, claudeTokens, probeCommand, detectUsageLimit, detectAuthFailure, servicesRule } from './lib/agent.mjs';
 
@@ -48,6 +49,14 @@ export function parseDiff(text) {
     });
 }
 
+function readTail(logFile) {
+  try {
+    return tailLog(readFileSync(logFile, 'utf8'));
+  } catch {
+    return '';
+  }
+}
+
 async function runChecks(config, projectDir, logsDir, phase, env) {
   const results = {};
   for (const [name, cmd] of Object.entries(config.checks)) {
@@ -57,7 +66,13 @@ async function runChecks(config, projectDir, logsDir, phase, env) {
       logFile: join(logsDir, `${phase}-${name}.log`),
       env,
     });
-    results[name] = { ok: r.exitCode === 0 && !r.timedOut, exitCode: r.exitCode, timedOut: r.timedOut, durationSec: r.durationSec };
+    const ok = r.exitCode === 0 && !r.timedOut;
+    results[name] = { ok, exitCode: r.exitCode, timedOut: r.timedOut, durationSec: r.durationSec };
+    // A blocked comment should say why a check failed without anyone opening the run log.
+    if (!ok) {
+      const tail = readTail(join(logsDir, `${phase}-${name}.log`));
+      if (tail) results[name].tail = tail;
+    }
   }
   return results;
 }
