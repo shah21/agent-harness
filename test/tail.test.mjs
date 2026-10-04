@@ -29,3 +29,10 @@ test('returns an empty string for an empty or whitespace-only log', () => {
   assert.equal(tailLog(''), '');
   assert.equal(tailLog('\n \n\n'), '');
 });
+
+test('default window keeps 60 lines so a failing test name stays visible', () => {
+  const text = Array.from({ length: 80 }, (_, i) => `line ${i + 1}`).join('\n');
+  const out = tailLog(text);
+  assert.equal(out.split('\n').length, 60);
+  assert.ok(out.startsWith('line 21\n'));
+});
