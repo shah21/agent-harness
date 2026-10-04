@@ -8,6 +8,19 @@ function checkTable(checks) {
   return ['| Check | Result |', '|---|---|', ...rows].join('\n');
 }
 
+// A fence longer than any tilde run inside the text, so command output cannot close it early.
+function fenced(text) {
+  const longest = Math.max(0, ...(text.match(/~+/g) ?? []).map((m) => m.length));
+  const fence = '~'.repeat(Math.max(3, longest + 1));
+  return [fence, text, fence].join('\n');
+}
+
+function checkTails(checks) {
+  return Object.entries(checks ?? {})
+    .filter(([, c]) => !c.ok && c.tail)
+    .flatMap(([name, c]) => ['', `**${name}** output (last lines)`, fenced(c.tail)]);
+}
+
 const bullets = (items) => items.map((x) => `- ${x}`).join('\n');
 
 const runLink = (v, runUrl) =>
@@ -66,7 +79,7 @@ export function renderComment(v, { runUrl, prUrl } = {}) {
   if (r?.status === 'BLOCKED') {
     lines.push('', '**Evidence**', '~~~', r.evidence, '~~~', '', '**Required human action**', r.requiredHumanAction);
   }
-  if (v.checks && Object.keys(v.checks).length) lines.push('', checkTable(v.checks));
+  if (v.checks && Object.keys(v.checks).length) lines.push('', checkTable(v.checks), ...checkTails(v.checks));
   if (v.warnings?.length) lines.push('', '**Warnings**', bullets(v.warnings));
   if (v.commits > 0) lines.push('', `The attempt was pushed to \`${v.branch}\` for inspection.`);
   lines.push('', runLink(v, runUrl), '', 'To retry: remove `agent:blocked` and add `agent`.');
