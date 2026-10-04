@@ -9,6 +9,7 @@ Design: `docs/superpowers/specs/2026-10-02-agent-harness-design.md`
 1. Copy `templates/agent.yml` to `.github/workflows/agent.yml`; replace `OWNER`.
 2. Copy `templates/agent.config.json` to the repo root; adjust commands. Add `"env": { "NAME": "value" }` for non-secret values the build or tests need (for example a placeholder `DATABASE_URL`); it is committed, so never put real secrets there.
 3. Copy `templates/agent-task.md` to `.github/ISSUE_TEMPLATE/agent-task.md`.
+   Also copy `templates/close-merged.yml` to `.github/workflows/close-merged.yml` (replace `OWNER`): it closes a task's issue when its agent PR is merged, even a stacked one.
 4. `claude setup-token`, then `gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo <owner>/<repo>`.
 5. Settings → Actions → General → enable *Allow GitHub Actions to create and approve pull requests*.
 6. Make sure every check passes on the default branch (a red base blocks every task).
@@ -21,7 +22,7 @@ Open an issue whose body is `plan: <path>` and `task: <n>`, then add the `agent`
 
 A stacked PR targets the previous task's branch, not the default branch, and two GitHub behaviours follow from that:
 
-- `Closes #n` closes the issue only when the PR is merged into the default branch. Merging a PR into its parent branch leaves its issue open.
+- `Closes #n` closes the issue only when the PR is merged into the default branch. With `close-merged.yml` installed (see "Add to a project") the issue is closed when the PR merges whatever its base; without it, merging a PR into its parent branch leaves its issue open.
 - Deleting a merged branch auto-closes any PR that targets it (the PR cannot be reopened; open a new one from the same branch).
 
 Merge bottom-up: merge the lowest PR, retarget the next one to the default branch (`gh pr edit <n> --base main`), merge it, and repeat up the stack. Delete the branches only after the whole stack is merged, so don't use "delete branch on merge" or `gh pr merge --delete-branch` until then.

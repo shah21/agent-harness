@@ -1,0 +1,23 @@
+name: agent-close-merged
+
+# Closes a task's issue when its agent PR is merged, even if the PR was stacked on
+# another branch. A separate workflow on purpose: the agent queue keeps at most one
+# pending run per concurrency group, so an extra event there could displace a task.
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  close:
+    if: >-
+      github.event.pull_request.merged == true &&
+      startsWith(github.event.pull_request.head.ref, 'agent/issue-') &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    uses: OWNER/agent-harness/.github/workflows/close-merged.yml@v1
+    with:
+      harness_repo: OWNER/agent-harness
+      harness_ref: v1

@@ -1,0 +1,51 @@
+name: agent-close-merged
+
+# Closes the task issue of a merged agent PR. GitHub's "Closes #n" only fires when a
+# PR merges into the default branch, so a stacked PR merged into its parent branch
+# would leave its issue open. The caller must be its own workflow, not the agent
+# queue (see templates/close-merged.yml).
+
+on:
+  workflow_call:
+    inputs:
+      harness_repo:
+        type: string
+        required: true
+      harness_ref:
+        type: string
+        default: v1
+      node_version:
+        type: string
+        default: '22'
+
+jobs:
+  close:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout harness
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.harness_repo }}
+          ref: ${{ inputs.harness_ref }}
+          path: .harness
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+
+      - name: Close the task issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          issue=$(node .harness/harness/cli.mjs merged-issue --event "$GITHUB_EVENT_PATH")
+          if [ -z "$issue" ]; then
+            echo "no agent task issue to close"
+            exit 0
+          fi
+          gh issue close "$issue" --reason completed
