@@ -6,6 +6,8 @@ Design: `docs/superpowers/specs/2026-10-02-agent-harness-design.md`
 
 ## Add to a project
 
+Quickest: `node harness/bootstrap.mjs --repo owner/name --project <dir>` does steps 1 to 5 and the verification in step 6 (details and the mistakes it checks for: `docs/bootstrap.md`). By hand:
+
 1. Copy `templates/agent.yml` to `.github/workflows/agent.yml`; replace `OWNER`.
 2. Copy `templates/agent.config.json` to the repo root; adjust commands. Add `"env": { "NAME": "value" }` for non-secret values the build or tests need (for example a placeholder `DATABASE_URL`); it is committed, so never put real secrets there.
 3. Copy `templates/agent-task.md` to `.github/ISSUE_TEMPLATE/agent-task.md`.
