@@ -70,3 +70,38 @@ test('no artifacts → no artifacts line', () => {
   assert.doesNotMatch(renderComment(readyVerdict, { runUrl: 'https://run', prUrl: 'https://pr' }), /artifacts collected/);
   assert.doesNotMatch(renderPrBody({ ...readyVerdict, artifacts: { files: 0, bytes: 0, skipped: 0 } }), /Artifacts:/);
 });
+
+test('blocked comment shows the output of each failing check, and only failing ones', () => {
+  const c = renderComment({
+    ...readyVerdict, outcome: 'BLOCKED', kind: 'gate', reasons: ['base is red: typecheck failed before the agent started'], warnings: [], commits: 0, report: null,
+    checks: {
+      test: { ok: true, exitCode: 0, timedOut: false, durationSec: 2 },
+      typecheck: { ok: false, exitCode: 2, timedOut: false, durationSec: 4, tail: "src/app/layout.tsx(20,50): error TS2304: Cannot find name 'LayoutProps'." },
+    },
+  }, { runUrl: 'https://run' });
+  assert.match(c, /\| typecheck \| FAIL \(exit 2\) \|/);
+  assert.match(c, /\*\*typecheck\*\* output \(last lines\)/);
+  assert.match(c, /error TS2304: Cannot find name 'LayoutProps'\./);
+  assert.doesNotMatch(c, /\*\*test\*\* output/);
+});
+
+test('a failing check whose output contains a ~~~ fence cannot break out of the block', () => {
+  const c = renderComment({
+    ...readyVerdict, outcome: 'BLOCKED', kind: 'gate', reasons: ['x'], warnings: [], commits: 0, report: null,
+    checks: { test: { ok: false, exitCode: 1, timedOut: false, durationSec: 1, tail: 'before\n~~~\n**injected**\n~~~~~\nafter' } },
+  }, { runUrl: 'https://run' });
+  const lines = c.split('\n');
+  const heading = lines.findIndex((l) => l.includes('**test** output'));
+  const fence = lines[heading + 1];
+  assert.match(fence, /^~{6}$/, 'fence is one longer than the longest tilde run in the output');
+  assert.equal(lines.filter((l) => l === fence).length, 2, 'exactly one opening and one closing fence');
+  assert.ok(c.includes('**injected**'), 'the output is still there');
+});
+
+test('failing checks without captured output add no output block', () => {
+  const c = renderComment({
+    ...readyVerdict, outcome: 'BLOCKED', kind: 'gate', reasons: ['x'], warnings: [], commits: 0, report: null,
+    checks: { test: { ok: false, exitCode: 1, timedOut: false, durationSec: 1 } },
+  }, { runUrl: 'https://run' });
+  assert.doesNotMatch(c, /output \(last lines\)/);
+});
