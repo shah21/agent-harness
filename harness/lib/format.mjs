@@ -21,6 +21,18 @@ function checkTails(checks) {
     .flatMap(([name, c]) => ['', `**${name}** output (last lines)`, fenced(c.tail)]);
 }
 
+const paths = (list) => list.map((p) => `\`${p}\``).join(', ');
+
+function conformanceSection(c) {
+  if (!c) return [];
+  const lines = ['', '## Plan conformance', `- ${c.touchedPlanned} of ${c.planned} planned files changed`];
+  if (c.checked > 0) lines.push(`- ${c.identical.length} of ${c.checked} files with plan code are identical`);
+  if (c.differs.length) lines.push(`- Differs from the plan: ${paths(c.differs)}`);
+  if (c.missing.length) lines.push(`- Planned but not changed: ${paths(c.missing)}`);
+  if (c.unexpected.length) lines.push(`- Not in the plan: ${paths(c.unexpected)}`);
+  return lines;
+}
+
 const bullets = (items) => items.map((x) => `- ${x}`).join('\n');
 
 const runLink = (v, runUrl) =>
@@ -41,6 +53,7 @@ export function renderPrBody(v) {
     '## Checks (run by the harness)',
     checkTable(v.checks),
     ...(v.artifacts?.files ? ['', `Artifacts: ${v.artifacts.files} files collected in the run artifact.`] : []),
+    ...conformanceSection(v.conformance),
     ...(v.warnings.length ? ['', '## Warnings', bullets(v.warnings)] : []),
     '',
     '## Self-review',

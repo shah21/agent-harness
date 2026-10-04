@@ -105,3 +105,21 @@ test('failing checks without captured output add no output block', () => {
   }, { runUrl: 'https://run' });
   assert.doesNotMatch(c, /output \(last lines\)/);
 });
+
+test('PR body summarises plan conformance and names the exceptions', () => {
+  const body = renderPrBody({ ...readyVerdict, conformance: { identical: ['a.ts'], differs: ['b.ts'], missing: ['m.ts'], unexpected: ['u.ts'], planned: 3, touchedPlanned: 2, checked: 2 } });
+  assert.match(body, /## Plan conformance/);
+  assert.match(body, /2 of 3 planned files changed/);
+  assert.match(body, /1 of 2 files with plan code are identical/);
+  assert.match(body, /Differs from the plan: `b\.ts`/);
+  assert.match(body, /Planned but not changed: `m\.ts`/);
+  assert.match(body, /Not in the plan: `u\.ts`/);
+});
+
+test('PR body shows a clean conformance line and omits the section when there is none', () => {
+  const clean = renderPrBody({ ...readyVerdict, conformance: { identical: ['a.ts', 'b.ts'], differs: [], missing: [], unexpected: [], planned: 2, touchedPlanned: 2, checked: 2 } });
+  assert.match(clean, /2 of 2 planned files changed/);
+  assert.match(clean, /2 of 2 files with plan code are identical/);
+  assert.doesNotMatch(clean, /Differs from the plan/);
+  assert.doesNotMatch(renderPrBody(readyVerdict), /Plan conformance/);
+});
