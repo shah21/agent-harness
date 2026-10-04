@@ -118,6 +118,16 @@ test('red base → blocked before the agent runs', async () => {
   assert.equal(existsSync(join(projectDir, 'agent-ran')), false);
 });
 
+test('red base → the failing check\'s output is captured in the verdict', async () => {
+  const { verdict } = await run({
+    cmd: 'true',
+    mutate: (dir) => writeFileSync(join(dir, 'value.txt'), '2\n'),
+  });
+  assert.equal(verdict.checks.test.ok, false);
+  assert.match(verdict.checks.test.tail, /FAIL tests\//);
+  assert.equal(verdict.checks.lint.tail, undefined, 'passing checks carry no tail');
+});
+
 test('unknown task number → bad task reference', async () => {
   const { verdict } = await run({ agent: 'honest.sh', issue: { ...ISSUE, body: 'plan: docs/plan.md\ntask: 9' } });
   assert.equal(verdict.kind, 'gate');
