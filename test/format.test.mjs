@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { renderPrBody, renderComment } from '../harness/lib/format.mjs';
+import { renderPrBody, renderComment, renderTargetPr } from '../harness/lib/format.mjs';
 import { parseTaskMarker } from '../harness/lib/queue.mjs';
+import { parseTargetsMarker, RELATED_TOKEN } from '../harness/lib/target.mjs';
 
 const readyVerdict = {
   outcome: 'READY_FOR_QA', kind: null, reasons: [], warnings: ['dependency files changed: package.json'],
@@ -122,4 +123,48 @@ test('PR body shows a clean conformance line and omits the section when there is
   assert.match(clean, /2 of 2 files with plan code are identical/);
   assert.doesNotMatch(clean, /Differs from the plan/);
   assert.doesNotMatch(renderPrBody(readyVerdict), /Plan conformance/);
+});
+
+const prArgs = {
+  titleTemplate: 'Task {task}: {taskTitle}', bodyTemplate: null, issue: 7, task: 3, taskTitle: 'feat: Add picker',
+  report: { summary: 'Added picker.' }, checks: { test: { ok: true }, lint: { ok: true } }, changedFiles: ['src/a.ts'],
+};
+
+test('target PR default text has no harness marker or issue link', () => {
+  const { prTitle, prBody } = renderTargetPr(prArgs);
+  assert.equal(prTitle, 'Task 3: Add picker');
+  assert.match(prBody, /## Summary\nAdded picker\./);
+  assert.match(prBody, /## Changed files\n- `src\/a\.ts`/);
+  assert.match(prBody, /## Checks\n- test: PASS\n- lint: PASS/);
+  assert.ok(prBody.includes(RELATED_TOKEN));
+  assert.doesNotMatch(prBody, /agent-task|Closes #/);
+});
+
+test('target PR uses the consumer templates', () => {
+  const { prTitle, prBody } = renderTargetPr({ ...prArgs, titleTemplate: '{taskTitle}', bodyTemplate: 'Why: {summary}\n{related}' });
+  assert.equal(prTitle, 'Add picker');
+  assert.equal(prBody, `Why: Added picker.\n${RELATED_TOKEN}`);
+  assert.throws(() => renderTargetPr({ ...prArgs, bodyTemplate: '{oops}' }), /unknown variable \{oops\}/);
+});
+
+const targetPrs = [
+  { repo: 'o/sub', number: 45, url: 'https://github.com/o/sub/pull/45', branch: 'feat/x', base: 'main', role: 'sub' },
+  { repo: 'o/super', number: 123, url: 'https://github.com/o/super/pull/123', branch: 'feat/x', base: 'main', role: 'super' },
+];
+
+test('ready comment with target PRs lists them and carries the marker', () => {
+  const c = renderComment(readyVerdict, { runUrl: 'https://run', targetPrs });
+  assert.match(c, /^✅ \*\*READY_FOR_QA\*\* — https:\/\/github\.com\/o\/super\/pull\/123/);
+  assert.match(c, /- `o\/sub` #45 \(draft\): https:\/\/github\.com\/o\/sub\/pull\/45/);
+  assert.deepEqual(parseTargetsMarker(c), targetPrs.map(({ url, ...rest }) => rest));
+});
+
+test('blocked comment with targets reports consumer pushes and unpushed targets', () => {
+  const v = {
+    ...readyVerdict, outcome: 'BLOCKED', kind: 'gate', reasons: ['x'], report: null, checks: {}, warnings: [],
+    commits: 3, consumerCommits: 0, targets: [{ repo: 'o/super', commits: 3 }],
+  };
+  const c = renderComment(v, { runUrl: 'https://run' });
+  assert.doesNotMatch(c, /pushed to `agent\/issue-7`/);
+  assert.match(c, /Changes to the target repositories were not pushed; their bundles are in the run artifact\./);
 });
