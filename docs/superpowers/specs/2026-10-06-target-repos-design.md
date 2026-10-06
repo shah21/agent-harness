@@ -68,8 +68,8 @@ Today: checkout consumer → install → setup → baseline → agent → clean 
 Gate (`gate.mjs`) is unchanged in logic; its inputs become combined:
 
 - `commits` = sum over repositories.
-- `diff` = every repository's diff with paths prefixed by the repository's path from the consumer root (e.g. `target/server/ee/x.ts`), so `CHANGED_FILES`, conformance and plan file lists all use consumer-relative paths.
-- Protected paths: the config's list, plus `.github/**` **inside each target repository** (`target/.github/**`, `target/server/ee/.github/**`).
+- `diff` = every repository's diff with paths prefixed by the repository's path from the consumer root (e.g. `target/packages/core/x.ts`), so `CHANGED_FILES`, conformance and plan file lists all use consumer-relative paths.
+- Protected paths: the config's list, plus `.github/**` **inside each target repository** (`target/.github/**`, `target/packages/core/.github/**`).
 - `testGlobs` match against the prefixed paths, so existing test deletions in target repos block as today.
 - New block: a submodule has commits but the superproject's commit does not move its pointer to the submodule branch tip → `BLOCKED (gate): submodule <path> changed but the superproject does not point at it`. Without this the superproject PR would build against the old submodule.
 - The agent left a target repo on another branch → BLOCKED (gate), as for the consumer today.
