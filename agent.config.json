@@ -1,0 +1,6 @@
+{
+  "install": "true",
+  "checks": { "test": "npm test" },
+  "testGlobs": ["test/**"],
+  "protectedPaths": ["test/golden/**"]
+}

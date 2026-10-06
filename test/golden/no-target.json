@@ -1,0 +1,81 @@
+{
+  "verdict": {
+    "issue": 7,
+    "issueTitle": "Task 1",
+    "baseBranch": "main",
+    "branch": "agent/issue-7",
+    "plan": "docs/plan.md",
+    "task": 1,
+    "taskTitle": "Add greeting",
+    "model": "sonnet",
+    "account": null,
+    "commits": 1,
+    "checks": {
+      "test": {
+        "ok": true,
+        "exitCode": 0,
+        "timedOut": false,
+        "durationSec": 0
+      },
+      "lint": {
+        "ok": true,
+        "exitCode": 0,
+        "timedOut": false,
+        "durationSec": 0
+      }
+    },
+    "report": {
+      "status": "READY_FOR_QA",
+      "task": "plan=docs/plan.md task=1 issue=#7",
+      "summary": "Did the task.",
+      "changedFiles": [
+        "greeting.txt",
+        "tests/greeting.test.sh"
+      ],
+      "checks": {
+        "test": "PASS",
+        "lint": "PASS"
+      },
+      "selfReview": "Looks fine.",
+      "knownIssues": "None",
+      "blocker": "",
+      "evidence": "",
+      "requiredHumanAction": ""
+    },
+    "reportText": "STATUS: READY_FOR_QA\nTASK: plan=docs/plan.md task=1 issue=#7\nSUMMARY:\nDid the task.\nCHANGED_FILES:\n- greeting.txt\n- tests/greeting.test.sh\nCHECKS:\n- test: PASS\n- lint: PASS\nSELF_REVIEW:\nLooks fine.\nKNOWN_ISSUES:\nNone\n",
+    "artifacts": null,
+    "outcome": "READY_FOR_QA",
+    "kind": null,
+    "reasons": [],
+    "warnings": [],
+    "diff": [
+      {
+        "status": "A",
+        "path": "greeting.txt"
+      },
+      {
+        "status": "A",
+        "path": "tests/greeting.test.sh"
+      }
+    ]
+  },
+  "prompt": "You are executing one task from an implementation plan, unattended. No human will answer questions during this run.\n\n- Task: Task 1 — Add greeting\n- Plan file: docs/plan.md (relative to the repository root, which is your working directory)\n- Issue: #7\n- Branch: agent/issue-7 (already checked out; stay on it)\n\n## What to do\n\n1. Read the plan file: its header sections (goal, architecture, global constraints) and Task 1 in full. Implement only Task 1.\n2. Follow the task's steps, including its tests and verification commands.\n3. Run every project check before reporting:\n   - test: `sh tests/run.sh`\n   - lint: `sh lint.sh`\n4. Commit your work on this branch with clear messages. Do not push and do not open pull requests.\n5. Write the report described below to <out>/report.md.\n\n## Rules\n\n- Do only what Task 1 asks. No unrelated refactoring, renames, or formatting changes.\n- Never delete, skip, or weaken existing tests or assertions to get a green result.\n- Never modify these protected paths: `.github/**`, `agent.config.json`.\n- Wrap every test, build, or lint command in `timeout 600`, for example `timeout 600 pnpm test`.\n- Do not start dev servers or watchers yourself; a check command that starts and stops its own server (for example a test runner's web-server option) is fine.\n- Earlier tasks of this plan may already be implemented in this branch's history; build on them.\n- If the plan does not match the code, a dependency or secret is missing, or the task cannot be done safely, stop and report BLOCKED with evidence. Do not improvise around the plan.\n\n## Report format\n\nWrite exactly these fields to <out>/report.md, each field name at the start of a line:\n\nSTATUS: READY_FOR_QA or BLOCKED\nTASK: plan=docs/plan.md task=1 issue=#7\nSUMMARY:\n<2-5 lines>\nCHANGED_FILES:\n- <one path per line: every file changed by your commits>\nCHECKS:\n- test: <PASS|FAIL|NOT_RUN>\n- lint: <PASS|FAIL|NOT_RUN>\n(one line per check, exactly in this form; replace the placeholder with PASS, FAIL or NOT_RUN)\nSELF_REVIEW:\n<scope respected? tests added? risks?>\nKNOWN_ISSUES:\n<text, or None>\n\nWhen STATUS is BLOCKED, also include:\n\nBLOCKER:\n<what stopped you, one or two lines>\nEVIDENCE:\n<the command you ran and the relevant output>\nREQUIRED_HUMAN_ACTION:\n<what the human must do before this task can be retried>\n\nThe harness re-runs every check itself after you finish and compares the results with your report. A report that claims PASS for a failing check is rejected.\n",
+  "prBody": "<!-- agent-task plan=docs/plan.md task=1 issue=7 -->\nCloses #7\n\n**Task 1: Add greeting** — `docs/plan.md`\nBase: `main` · Model: `sonnet` · Commits: 1\n\n## Summary\nDid the task.\n\n## Checks (run by the harness)\n| Check | Result |\n|---|---|\n| test | PASS |\n| lint | PASS |\n\n## Self-review\nLooks fine.\n\n## Known issues\nNone\n\n<details><summary>Agent report</summary>\n\n~~~\nSTATUS: READY_FOR_QA\nTASK: plan=docs/plan.md task=1 issue=#7\nSUMMARY:\nDid the task.\nCHANGED_FILES:\n- greeting.txt\n- tests/greeting.test.sh\nCHECKS:\n- test: PASS\n- lint: PASS\nSELF_REVIEW:\nLooks fine.\nKNOWN_ISSUES:\nNone\n~~~\n\n</details>",
+  "readyComment": "✅ **READY_FOR_QA** — https://pr\n\n[Run log and artifacts](https://run)",
+  "blockedComment": "⛔ **BLOCKED** (gate)\n\n- x\n\n| Check | Result |\n|---|---|\n| test | PASS |\n| lint | PASS |\n\nThe attempt was pushed to `agent/issue-7` for inspection.\n\n[Run log and artifacts](https://run)\n\nTo retry: remove `agent:blocked` and add `agent`.",
+  "selection": {
+    "issue": {
+      "number": 9,
+      "title": "T2",
+      "body": "plan: docs/plan.md\ntask: 2",
+      "labels": [
+        "agent"
+      ]
+    },
+    "plan": "docs/plan.md",
+    "task": 2,
+    "base": "agent/issue-7",
+    "skip": null
+  },
+  "publishLog": "gh issue edit 7 --repo o/r --remove-label agent --remove-label agent:running --remove-label agent:ready --remove-label agent:blocked --remove-label agent:waiting\ngh pr list --repo o/r --head agent/issue-7 --state open --json url -q .[0].url // empty\ngh pr create --repo o/r --base main --head agent/issue-7 --title Task 1: Add greeting --body-file <file>\n<!-- agent-task plan=docs/plan.md task=1 issue=7 -->\nCloses #7\n\n**Task 1: Add greeting** — `docs/plan.md`\nBase: `main` · Model: `sonnet` · Commits: 1\n\n## Summary\nDid the task.\n\n## Checks (run by the harness)\n| Check | Result |\n|---|---|\n| test | PASS |\n| lint | PASS |\n\n## Self-review\nLooks fine.\n\n## Known issues\nNone\n\n<details><summary>Agent report</summary>\n\n~~~\nSTATUS: READY_FOR_QA\nTASK: plan=docs/plan.md task=1 issue=#7\nSUMMARY:\nDid the task.\nCHANGED_FILES:\n- greeting.txt\n- tests/greeting.test.sh\nCHECKS:\n- test: PASS\n- lint: PASS\nSELF_REVIEW:\nLooks fine.\nKNOWN_ISSUES:\nNone\n~~~\n\n</details>gh issue edit 7 --repo o/r --add-label agent:ready\ngh issue comment 7 --repo o/r --body-file <file>\n✅ **READY_FOR_QA** — https://github.com/o/r/pull/9\n\n[Run log and artifacts](https://run)"
+}
