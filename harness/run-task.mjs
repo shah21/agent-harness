@@ -14,7 +14,11 @@ import { tailLog } from './lib/tail.mjs';
 import { parsePlanTask, comparePlan, conformanceWarnings } from './lib/conformance.mjs';
 import { collectArtifacts } from './lib/artifacts.mjs';
 import { agentCommand, agentEnv, renderPrompt, claudeTokens, probeCommand, detectUsageLimit, detectAuthFailure, servicesRule } from './lib/agent.mjs';
-import { prepareTarget, startTargetBranches, resetTargets } from './lib/target-run.mjs';
+import {
+  prepareTarget, startTargetBranches, resetTargets, targetsOffBranch, stashTargets,
+  measureTargets, pointerErrors, bundleTargets,
+} from './lib/target-run.mjs';
+import { renderTargetPr } from './lib/format.mjs';
 import { targetPromptSection } from './lib/target.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -276,15 +280,25 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
 
   const head = git(projectDir, 'rev-parse', '--abbrev-ref', 'HEAD');
   if (head !== meta.branch) return finish(blocked('gate', `agent switched to branch "${head}"; work must stay on ${meta.branch}`));
+  if (target) {
+    const off = targetsOffBranch(target);
+    if (off) return finish(blocked('gate', `agent switched ${off.path} to branch "${off.head}"; work must stay on ${target.branch}`));
+  }
 
   const dirtyAfter = git(projectDir, 'status', '--porcelain');
   if (dirtyAfter) {
     if (dirtyAfter !== dirtyBefore) warnings.push('agent left uncommitted changes; they were stashed and are not part of this result');
     git(projectDir, 'stash', 'push', '--include-untracked', '-q', '-m', 'agent-harness: uncommitted changes');
   }
+  if (target && stashTargets(target)) {
+    warnings.push('agent left uncommitted changes in the target repositories; they were stashed and are not part of this result');
+  }
 
-  const commits = Number(git(projectDir, 'rev-list', '--count', `${baseSha}..HEAD`));
-  const diff = parseDiff(git(projectDir, 'diff', '--name-status', '-M', baseSha, 'HEAD'));
+  const consumerCommits = Number(git(projectDir, 'rev-list', '--count', `${baseSha}..HEAD`));
+  const consumerDiff = parseDiff(git(projectDir, 'diff', '--name-status', '-M', baseSha, 'HEAD'));
+  if (target) measureTargets(target, parseDiff);
+  const commits = consumerCommits + (target ? target.repos.reduce((n, r) => n + r.commits, 0) : 0);
+  const diff = target ? [...consumerDiff, ...target.repos.flatMap((r) => r.prefixedDiff)] : consumerDiff;
   const agentFailed = agent.timedOut || agent.exitCode !== 0;
   let checks = {};
   if (!agentFailed) {
@@ -307,7 +321,10 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
   }
   const reportText = existsSync(reportPath) ? readFileSync(reportPath, 'utf8') : null;
 
-  const decision = decide({ agent, reportText, commits, diff, checks, config });
+  const gateConfig = target
+    ? { ...config, protectedPaths: [...config.protectedPaths, ...target.repos.map((r) => `${r.path}/.github/**`)] }
+    : config;
+  const decision = decide({ agent, reportText, commits, diff, checks, config: gateConfig, pointerErrors: target ? pointerErrors(target) : [] });
   const readAtHead = (path) => {
     try {
       return execFileSync('git', ['show', `HEAD:${path}`], { cwd: projectDir, encoding: 'utf8' });
@@ -316,6 +333,21 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
     }
   };
   const conformance = diff.length ? comparePlan(parsePlanTask(planText, ref.task), diff, readAtHead) : null;
+  let targetFields = {};
+  if (target) {
+    const ready = decision.outcome === 'READY_FOR_QA';
+    const targets = bundleTargets(target, outDir).map((entry) => {
+      const repo = target.repos.find((r) => r.repo === entry.repo);
+      const pr = ready && entry.commits > 0
+        ? renderTargetPr({
+          titleTemplate: config.target.pr.title, bodyTemplate: target.prTemplate, issue: issue.number, task: ref.task,
+          taskTitle: meta.taskTitle, report: decision.report, checks, changedFiles: repo.diff.map((d) => d.path),
+        })
+        : { prTitle: null, prBody: null };
+      return { ...entry, ...pr };
+    });
+    targetFields = { targets, consumerCommits };
+  }
   return finish({
     ...decision,
     ...(conformance ? { conformance } : {}),
@@ -326,6 +358,7 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
     diff,
     checks,
     baseSha,
+    ...targetFields,
   });
 }
 

@@ -1,5 +1,5 @@
 // Git operations on the target clone (superproject + submodules) inside the consumer checkout.
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { parseGitmodules, renderBranch, fill, TEMPLATE_VARS } from './target.mjs';
@@ -63,4 +63,59 @@ export function resetTargets(t) {
     git(r.dir, 'reset', '-q', '--hard', r.baseSha);
     git(r.dir, 'clean', '-fdq');
   }
+}
+
+export function targetsOffBranch(t) {
+  for (const r of t.repos) {
+    const head = git(r.dir, 'rev-parse', '--abbrev-ref', 'HEAD');
+    if (head !== t.branch) return { path: r.path, head };
+  }
+  return null;
+}
+
+// Submodule pointer changes are left alone here; pointerErrors judges them.
+export function stashTargets(t) {
+  let stashed = false;
+  for (const r of t.repos) {
+    if (git(r.dir, 'status', '--porcelain', '--ignore-submodules=all')) {
+      git(r.dir, 'stash', 'push', '--include-untracked', '-q', '-m', 'agent-harness: uncommitted changes');
+      stashed = true;
+    }
+  }
+  return stashed;
+}
+
+export function measureTargets(t, parseDiff) {
+  for (const r of t.repos) {
+    r.commits = Number(git(r.dir, 'rev-list', '--count', `${r.baseSha}..HEAD`));
+    r.diff = parseDiff(git(r.dir, 'diff', '--name-status', '-M', r.baseSha, 'HEAD'));
+    r.prefixedDiff = r.diff.map((d) => ({
+      ...d,
+      path: `${r.path}/${d.path}`,
+      ...(d.oldPath ? { oldPath: `${r.path}/${d.oldPath}` } : {}),
+    }));
+  }
+}
+
+export function pointerErrors(t) {
+  const sup = t.repos.find((r) => r.role === 'super');
+  return t.repos
+    .filter((r) => r.role === 'sub' && r.commits > 0)
+    .filter((r) => git(sup.dir, 'rev-parse', `HEAD:${r.subPath}`) !== git(r.dir, 'rev-parse', 'HEAD'))
+    .map((r) => `submodule ${r.path} changed but the superproject does not point at it`);
+}
+
+// Thin bundles (<base>..<branch>): the artifact carries the task's commits, not the history.
+export function bundleTargets(t, outDir) {
+  const dir = join(outDir, 'bundles');
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  return t.repos.map((r) => {
+    let bundle = null;
+    if (r.commits > 0) {
+      bundle = `bundles/${r.repo.replace('/', '__')}.bundle`;
+      git(r.dir, 'bundle', 'create', join(outDir, bundle), `${r.baseSha}..refs/heads/${t.branch}`);
+    }
+    return { repo: r.repo, path: r.path, role: r.role, branch: t.branch, base: r.base, baseSha: r.baseSha, commits: r.commits, bundle };
+  });
 }
