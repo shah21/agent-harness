@@ -32,6 +32,11 @@ on:
       # Optional second account, tried when the first is out of usage.
       CLAUDE_CODE_OAUTH_TOKEN_2:
         required: false
+      # Optional: tasks that change a separate target repository (agent.config.json "target").
+      TARGET_READ_TOKEN:
+        required: false
+      TARGET_PUSH_TOKEN:
+        required: false
 
 jobs:
   select:
@@ -67,6 +72,20 @@ jobs:
             gh label create "$l" --repo "$GITHUB_REPOSITORY" --color 5319e7 >/dev/null 2>&1 || true
           done
 
+      - name: Close tasks whose target PR merged
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_TOKEN: ${{ secrets.TARGET_PUSH_TOKEN }}
+        run: |
+          [ -n "$TARGET_TOKEN" ] || exit 0
+          gh issue list --repo "$GITHUB_REPOSITORY" --state open --label agent:ready --limit 100 --json number,body,comments > "$RUNNER_TEMP/ready-close.json"
+          node "$GITHUB_WORKSPACE/.harness/harness/cli.mjs" targets-to-check --ready "$RUNNER_TEMP/ready-close.json" | jq -c '.[]' | while read -r t; do
+            state=$(GH_TOKEN="$TARGET_TOKEN" gh pr view "$(jq -r .number <<<"$t")" --repo "$(jq -r .repo <<<"$t")" --json state -q .state || echo UNKNOWN)
+            if [ "$state" = "MERGED" ]; then
+              gh issue close "$(jq -r .issue <<<"$t")" --repo "$GITHUB_REPOSITORY" --reason completed
+            fi
+          done
+
       - name: Select next task
         id: select
         env:
@@ -76,9 +95,10 @@ jobs:
           cd "$RUNNER_TEMP/agent"
           gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit 200 --json number,title,body,labels > issues.json
           gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 100 --json number,headRefName,body,isCrossRepository > prs.json
+          gh issue list --repo "$GITHUB_REPOSITORY" --state open --label agent:ready --limit 100 --json number,body,comments > ready.json
           default=$(gh repo view "$GITHUB_REPOSITORY" --json defaultBranchRef -q .defaultBranchRef.name)
           node "$GITHUB_WORKSPACE/.harness/harness/cli.mjs" select \
-            --issues issues.json --prs prs.json --default-branch "$default" > selection.json
+            --issues issues.json --prs prs.json --default-branch "$default" --ready ready.json > selection.json
           cat selection.json
           jq '.issue' selection.json > issue.json
           {
@@ -152,6 +172,36 @@ jobs:
           DEFAULT_BRANCH: ${{ needs.select.outputs.default }}
         run: git -C project show "origin/$DEFAULT_BRANCH:agent.config.json" > "$RUNNER_TEMP/agent/default.agent.config.json"
 
+      - name: Target info
+        id: target
+        env:
+          HAS_TARGET_READ_TOKEN: ${{ secrets.TARGET_READ_TOKEN != '' }}
+          HAS_TARGET_PUSH_TOKEN: ${{ secrets.TARGET_PUSH_TOKEN != '' }}
+        run: >-
+          node .harness/harness/cli.mjs target-info
+          --config "$RUNNER_TEMP/agent/default.agent.config.json"
+          --selection "$RUNNER_TEMP/agent/selection.json"
+          --out "$RUNNER_TEMP/agent" >> "$GITHUB_OUTPUT"
+
+      # The read token lives in this step only: not on disk, not in the agent's environment.
+      - name: Checkout target
+        id: checkout_target
+        if: steps.target.outputs.repo != ''
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.target.outputs.repo }}
+          ref: ${{ steps.target.outputs.ref }}
+          token: ${{ secrets.TARGET_READ_TOKEN }}
+          submodules: recursive
+          fetch-depth: 0
+          path: project/${{ steps.target.outputs.path }}
+          persist-credentials: false
+
+      - name: Record target checkout failure
+        if: steps.checkout_target.outcome == 'failure'
+        run: echo "target checkout failed" > "$RUNNER_TEMP/agent/target-checkout.txt"
+
       # The step timeout sits inside the job's so the bundle and upload steps
       # below still get to run when the agent overruns.
       - name: Run task
@@ -167,6 +217,7 @@ jobs:
           --out "$RUNNER_TEMP/agent"
           --base-branch "$BASE"
           --config "$RUNNER_TEMP/agent/default.agent.config.json"
+          --selection "$RUNNER_TEMP/agent/selection.json"
 
       - name: Bundle the agent branch
         if: always()
@@ -234,11 +285,13 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SKIPPED: ${{ needs.select.outputs.skipped }}
           RUN_RESULT: ${{ needs.run.result }}
+          TARGET_PUSH_TOKEN: ${{ secrets.TARGET_PUSH_TOKEN }}
         run: |
           mkdir -p "$RUNNER_TEMP/agent"
           sel="$RUNNER_TEMP/selection/selection.json"
           export VERDICT="$RUNNER_TEMP/publish-verdict.json"
           export BUNDLE="$RUNNER_TEMP/agent/branch.bundle"
+          export BUNDLE_DIR="$RUNNER_TEMP/agent"
           if [ "$SKIPPED" = "true" ]; then
             node .harness/harness/cli.mjs skip-verdict --selection "$sel" > "$VERDICT"
           elif [ "$RUN_RESULT" = "success" ] && [ -f "$RUNNER_TEMP/agent/verdict.json" ]; then
