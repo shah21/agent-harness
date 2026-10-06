@@ -24,3 +24,50 @@ test('the reusable close-merged workflow only has the permissions it needs and c
   assert.match(y, /gh issue close .*--reason completed/);
   assert.match(y, /cli\.mjs merged-issue/);
 });
+
+const step = (yaml, name) => {
+  const start = yaml.indexOf(`- name: ${name}`);
+  assert.notEqual(start, -1, `step "${name}" missing`);
+  const next = yaml.indexOf('\n      - name:', start + 1);
+  return yaml.slice(start, next === -1 ? undefined : next);
+};
+
+test('target secrets are optional workflow_call secrets', () => {
+  const y = read('.github/workflows/run-task.yml');
+  assert.match(y, /TARGET_READ_TOKEN:\n\s+required: false/);
+  assert.match(y, /TARGET_PUSH_TOKEN:\n\s+required: false/);
+});
+
+test('the Run task step carries no target secret', () => {
+  const y = read('.github/workflows/run-task.yml');
+  assert.doesNotMatch(step(y, 'Run task'), /TARGET_/);
+  assert.match(step(y, 'Run task'), /--selection "\$RUNNER_TEMP\/agent\/selection\.json"/);
+});
+
+test('the target checkout uses the read token without persisting it and records failure', () => {
+  const y = read('.github/workflows/run-task.yml');
+  const s = step(y, 'Checkout target');
+  assert.match(s, /token: \$\{\{ secrets\.TARGET_READ_TOKEN \}\}/);
+  assert.match(s, /persist-credentials: false/);
+  assert.match(s, /submodules: recursive/);
+  assert.match(s, /continue-on-error: true/);
+  assert.match(step(y, 'Record target checkout failure'), /target checkout failed/);
+});
+
+test('publish gets the push token and the bundle directory; select closes merged target tasks', () => {
+  const y = read('.github/workflows/run-task.yml');
+  const p = step(y, 'Publish result');
+  assert.match(p, /TARGET_PUSH_TOKEN: \$\{\{ secrets\.TARGET_PUSH_TOKEN \}\}/);
+  assert.match(p, /BUNDLE_DIR/);
+  const c = step(y, 'Close tasks whose target PR merged');
+  assert.match(c, /\[ -n "\$TARGET_TOKEN" \] \|\| exit 0/);
+  assert.match(c, /targets-to-check/);
+  assert.match(c, /--reason completed/);
+  assert.match(step(y, 'Select next task'), /--ready /);
+});
+
+test('the caller template mentions the target secrets only as comments', () => {
+  const y = read('templates/agent.yml');
+  assert.match(y, /# TARGET_READ_TOKEN: \$\{\{ secrets\.TARGET_READ_TOKEN \}\}/);
+  assert.match(y, /# TARGET_PUSH_TOKEN: \$\{\{ secrets\.TARGET_PUSH_TOKEN \}\}/);
+});
