@@ -9,6 +9,8 @@ BUNDLE="${BUNDLE:-}"
 REMOTE="${PUSH_REMOTE:-https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git}"
 
 CLI="$(cd "$(dirname "$0")" && pwd)/cli.mjs"
+PUBLISH_TARGETS="$(cd "$(dirname "$0")" && pwd)/publish-targets.mjs"
+BUNDLE_DIR="${BUNDLE_DIR:-}"
 TMP=$(mktemp -d)
 field() { jq -r "$1" "$VERDICT"; }
 
@@ -26,6 +28,9 @@ on_error() {
   trap - ERR
   printf '%s\n' "⛔ **BLOCKED** (harness)" "" "- publishing failed at step: ${stage}" "" \
     "[Run log and artifacts](${RUN_URL})" "" 'To retry: remove `agent:blocked` and add `agent`.' > "$TMP/fail.md"
+  if [ -s "$TMP/target-prs.json" ]; then
+    { echo; echo "Opened before the failure:"; jq -r '.[] | "- `\(.repo)` #\(.number): \(.url)"' "$TMP/target-prs.json"; } >> "$TMP/fail.md"
+  fi
   gh issue edit "$issue" --repo "$REPO" --remove-label agent:running --remove-label agent:ready --add-label agent:blocked >/dev/null 2>&1 || true
   gh issue comment "$issue" --repo "$REPO" --body-file "$TMP/fail.md" >/dev/null 2>&1 || true
   exit "$code"
@@ -33,6 +38,7 @@ on_error() {
 trap on_error ERR
 
 has_bundle() { [ -n "$BUNDLE" ] && [ -f "$BUNDLE" ]; }
+has_targets() { [ "$(jq -r '(.targets // []) | map(select(.commits > 0)) | length' "$VERDICT")" -gt 0 ]; }
 
 push_branch() {
   stage="push"
@@ -50,16 +56,22 @@ gh issue edit "$issue" --repo "$REPO" --remove-label agent --remove-label agent:
 
 pr=""
 if [ "$outcome" = "READY_FOR_QA" ]; then
-  stage="bundle"
-  has_bundle
-  push_branch
-  stage="pr"
-  node "$CLI" render-pr --verdict "$VERDICT" > "$TMP/body.md"
-  pr=$(gh pr list --repo "$REPO" --head "$branch" --state open --json url -q '.[0].url // empty')
-  if [ -n "$pr" ]; then
-    gh pr edit "$pr" --repo "$REPO" --base "$base" --title "Task ${task}: ${title}" --body-file "$TMP/body.md" >/dev/null
-  else
-    pr=$(gh pr create --repo "$REPO" --base "$base" --head "$branch" --title "Task ${task}: ${title}" --body-file "$TMP/body.md")
+  if has_targets; then
+    stage="targets"
+    node "$PUBLISH_TARGETS" --verdict "$VERDICT" --bundle-dir "$BUNDLE_DIR" --out "$TMP/target-prs.json"
+  fi
+  if has_bundle || ! has_targets; then
+    stage="bundle"
+    has_bundle
+    push_branch
+    stage="pr"
+    node "$CLI" render-pr --verdict "$VERDICT" > "$TMP/body.md"
+    pr=$(gh pr list --repo "$REPO" --head "$branch" --state open --json url -q '.[0].url // empty')
+    if [ -n "$pr" ]; then
+      gh pr edit "$pr" --repo "$REPO" --base "$base" --title "Task ${task}: ${title}" --body-file "$TMP/body.md" >/dev/null
+    else
+      pr=$(gh pr create --repo "$REPO" --base "$base" --head "$branch" --title "Task ${task}: ${title}" --body-file "$TMP/body.md")
+    fi
   fi
   stage="label-outcome"
   gh issue edit "$issue" --repo "$REPO" --add-label agent:ready >/dev/null
@@ -76,10 +88,9 @@ else
 fi
 
 stage="comment"
-if [ -n "$pr" ]; then
-  node "$CLI" render-comment --verdict "$VERDICT" --run-url "$RUN_URL" --pr-url "$pr" > "$TMP/comment.md"
-else
-  node "$CLI" render-comment --verdict "$VERDICT" --run-url "$RUN_URL" > "$TMP/comment.md"
-fi
+args=(--verdict "$VERDICT" --run-url "$RUN_URL")
+[ -n "$pr" ] && args+=(--pr-url "$pr")
+[ -s "$TMP/target-prs.json" ] && args+=(--target-prs "$TMP/target-prs.json")
+node "$CLI" render-comment "${args[@]}" > "$TMP/comment.md"
 gh issue comment "$issue" --repo "$REPO" --body-file "$TMP/comment.md" >/dev/null
 echo "published ${outcome} for #${issue} ${pr}"
