@@ -1,17 +1,21 @@
 #!/usr/bin/env node
 // Small commands the reusable workflow calls between gh steps.
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { parseArgs } from 'node:util';
-import { selectNext } from './lib/queue.mjs';
+import { selectNext, targetsToCheck } from './lib/queue.mjs';
 import { renderPrBody, renderComment } from './lib/format.mjs';
 import { issueToClose } from './lib/merged.mjs';
+import { loadConfig } from './lib/config.mjs';
 
 const USAGE = `usage:
-  cli.mjs select --issues <f> --prs <f> --default-branch <b>
+  cli.mjs select --issues <f> --prs <f> --default-branch <b> [--ready <f>]
   cli.mjs skip-verdict --selection <f>
   cli.mjs fallback-verdict --selection <f>
   cli.mjs render-pr --verdict <f>
-  cli.mjs render-comment --verdict <f> --run-url <u> [--pr-url <u>]
+  cli.mjs target-info --config <f> --selection <f> --out <dir>
+  cli.mjs targets-to-check --ready <f>
+  cli.mjs render-comment --verdict <f> --run-url <u> [--pr-url <u>] [--target-prs <f>]
   cli.mjs merged-issue --event <f>`;
 
 const read = (f) => JSON.parse(readFileSync(f, 'utf8'));
@@ -36,6 +40,7 @@ try {
       issues: { type: 'string' }, prs: { type: 'string' }, 'default-branch': { type: 'string' },
       selection: { type: 'string' }, verdict: { type: 'string' }, event: { type: 'string' },
       'run-url': { type: 'string' }, 'pr-url': { type: 'string' },
+      ready: { type: 'string' }, config: { type: 'string' }, out: { type: 'string' }, 'target-prs': { type: 'string' },
     },
   }));
 } catch (e) {
@@ -45,7 +50,10 @@ try {
 
 switch (command) {
   case 'select':
-    print(selectNext({ issues: read(values.issues), prs: read(values.prs), defaultBranch: values['default-branch'] }));
+    print(selectNext({
+      issues: read(values.issues), prs: read(values.prs), defaultBranch: values['default-branch'],
+      ready: values.ready ? read(values.ready) : [],
+    }));
     break;
   case 'skip-verdict': {
     const selection = read(values.selection);
@@ -59,13 +67,35 @@ switch (command) {
     process.stdout.write(renderPrBody(read(values.verdict)));
     break;
   case 'render-comment':
-    process.stdout.write(renderComment(read(values.verdict), { runUrl: values['run-url'], prUrl: values['pr-url'] }));
+    process.stdout.write(renderComment(read(values.verdict), {
+      runUrl: values['run-url'], prUrl: values['pr-url'],
+      targetPrs: values['target-prs'] ? read(values['target-prs']) : undefined,
+    }));
     break;
   case 'merged-issue': {
     const issue = issueToClose(read(values.event));
     process.stdout.write(issue === null ? '' : `${issue}\n`);
     break;
   }
+  case 'target-info': {
+    let target = null;
+    try {
+      target = loadConfig(readFileSync(values.config, 'utf8')).target;
+    } catch {
+      // run-task reports an invalid config itself
+    }
+    if (!target) break;
+    if (process.env.HAS_TARGET_READ_TOKEN !== 'true' || process.env.HAS_TARGET_PUSH_TOKEN !== 'true') {
+      writeFileSync(join(values.out, 'target-checkout.txt'), 'target configured but TARGET_READ_TOKEN or TARGET_PUSH_TOKEN secret missing\n');
+      break;
+    }
+    const selection = read(values.selection);
+    process.stdout.write(`repo=${target.repo}\npath=${target.path}\nref=${selection.targets?.superBranch ?? ''}\n`);
+    break;
+  }
+  case 'targets-to-check':
+    print(targetsToCheck(read(values.ready)));
+    break;
   default:
     console.error(USAGE);
     process.exit(2);
