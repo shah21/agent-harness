@@ -19,7 +19,7 @@ One optional field in `agent.config.json`:
   "target": {
     "repo": "owner/superproject",
     "path": "target",
-    "branch": "fix/{slug}",
+    "branch": "{type}/{slug}",
     "pr": { "title": "{taskTitle}", "body": ".github/agent-pr-body.md" },
     "author": { "name": "Jane Doe", "email": "jane@example.com" }
   }
@@ -28,7 +28,7 @@ One optional field in `agent.config.json`:
 
 - **`repo`** (required) — `owner/name` of the superproject.
 - **`path`** (required) — where it is cloned, relative to the consumer root. Must be relative, no `..`, and ignored by the consumer's `.gitignore`; otherwise the run ends `BLOCKED (harness): target path "<p>" is not git-ignored`. This keeps the consumer's own diff free of target files.
-- **`branch`** — branch-name template. Variables: `{slug}` (task title, lowercased, non-alphanumerics → `-`, trimmed to 50 chars), `{issue}`, `{task}`. The result must match `^[a-z0-9][a-z0-9._/-]{0,99}$`, else BLOCKED (harness). Default `agent/issue-{issue}`. The same name is used in every changed repository.
+- **`branch`** — branch-name template. Variables: `{slug}` (task title, lowercased, non-alphanumerics → `-`, trimmed to 50 chars), `{issue}`, `{task}`, `{type}` (a conventional-commit type prefixing the task title, `## Task 3: feat: …` → `feat`, stripped from `{slug}`; one of `feat fix chore refactor test docs perf`; default `fix`). The result must match `^[a-z0-9][a-z0-9._/-]{0,99}$`, else BLOCKED (harness). Default `agent/issue-{issue}`. The same name is used in every changed repository.
 - **`pr.title`** — template; adds `{taskTitle}`. Default `Task {task}: {taskTitle}` (today's).
 - **`pr.body`** — path in the consumer repo to a Markdown template. Variables: `{summary}` (the report's SUMMARY), `{changedFiles}` (list for that repo), `{checks}` (one line per check), `{related}` (links to the other PRs of the same task). Default: today's body **without** the `agent-task` marker or `Closes #n` line, since they point at the consumer.
 - **`author`** — commit identity for the agent's commits in target repos. Default today's `agent-harness` identity.
@@ -158,7 +158,8 @@ Existing consumers (no `target`) must not change behaviour.
 - Multiple unrelated target repositories per consumer.
 - Morning reading the targets marker: a separate change in the Morning repo, against the §8 marker contract.
 
-## 13. Open questions
+## 13. Decisions
 
-- Branch prefix per task (`fix/` vs `feat/`): one template per consumer, or let a plan task heading override it (e.g. `## Task 3: feat: …`)?
-- Whether READY_FOR_QA should also require the target project's own CI on the draft PRs, or leave that to review.
+- **Readiness ignores the target project's own CI.** `READY_FOR_QA` means the consumer's checks passed on the harness's re-run; CI the PAT-opened draft PRs trigger in the target repos is for review only.
+- **Run-job read token accepted** as stated in §6.
+- **Branch prefix** from the task heading's type via `{type}` (§2), one template per consumer.
