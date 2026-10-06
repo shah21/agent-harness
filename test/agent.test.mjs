@@ -1,14 +1,31 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { agentEnv, agentCommand, renderPrompt, ALLOWED_TOOLS, claudeTokens, probeCommand, detectUsageLimit, detectAuthFailure, servicesRule } from '../harness/lib/agent.mjs';
+import { agentEnv, agentCommand, renderPrompt, ALLOWED_TOOLS, SHELL_TIMEOUTS, claudeTokens, probeCommand, detectUsageLimit, detectAuthFailure, servicesRule } from '../harness/lib/agent.mjs';
 
 test('agentEnv keeps only allowlisted variables plus extras', () => {
   const env = agentEnv(
     { PATH: '/bin', HOME: '/h', CLAUDE_CODE_OAUTH_TOKEN: 'tok', GITHUB_TOKEN: 'gh', GH_TOKEN: 'gh', ACTIONS_RUNTIME_TOKEN: 'rt' },
     { REPORT_PATH: '/r' },
   );
-  assert.deepEqual(env, { PATH: '/bin', HOME: '/h', CLAUDE_CODE_OAUTH_TOKEN: 'tok', REPORT_PATH: '/r' });
+  assert.deepEqual(env, { PATH: '/bin', HOME: '/h', CLAUDE_CODE_OAUTH_TOKEN: 'tok', ...SHELL_TIMEOUTS, REPORT_PATH: '/r' });
+});
+
+// Claude Code moves a shell command that outlives its tool timeout (120 s by default) to the
+// background. Unattended, the agent then ends its turn waiting for a notification that never
+// comes, so the session ends with no commit and no report. Checks are wrapped in `timeout 600`,
+// so the tool timeout sits just above that and the check's own timeout always fires first.
+test('agentEnv gives shell commands a timeout above the 600 s check limit', () => {
+  assert.deepEqual(SHELL_TIMEOUTS, { BASH_DEFAULT_TIMEOUT_MS: '660000', BASH_MAX_TIMEOUT_MS: '660000' });
+  const env = agentEnv({ PATH: '/bin', BASH_DEFAULT_TIMEOUT_MS: '1000' }, {});
+  assert.equal(env.BASH_DEFAULT_TIMEOUT_MS, '660000');
+  assert.equal(env.BASH_MAX_TIMEOUT_MS, '660000');
+});
+
+test('the prompt tells the agent to wait for every command in the foreground', () => {
+  const template = readFileSync(new URL('../harness/prompt.md', import.meta.url), 'utf8');
+  assert.match(template, /foreground/);
+  assert.match(template, /never end your turn while a command is still running/i);
 });
 
 test('agentCommand builds the claude invocation', () => {
@@ -50,7 +67,7 @@ test('claudeTokens lists configured tokens in order, skipping empty ones', () =>
 
 test('agentEnv never passes the second token through', () => {
   const env = agentEnv({ PATH: '/bin', CLAUDE_CODE_OAUTH_TOKEN: 'a', CLAUDE_CODE_OAUTH_TOKEN_2: 'b' }, { CLAUDE_CODE_OAUTH_TOKEN: 'b' });
-  assert.deepEqual(env, { PATH: '/bin', CLAUDE_CODE_OAUTH_TOKEN: 'b' });
+  assert.deepEqual(env, { PATH: '/bin', ...SHELL_TIMEOUTS, CLAUDE_CODE_OAUTH_TOKEN: 'b' });
 });
 
 test('probeCommand is a one-turn claude call, overridable for tests', () => {
