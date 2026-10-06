@@ -33,3 +33,6 @@ jobs:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       # Optional: a second account used when the first runs out of usage.
       CLAUDE_CODE_OAUTH_TOKEN_2: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_2 }}
+      # Optional: tasks that change a separate target repository (README, "Target repositories").
+      # TARGET_READ_TOKEN: ${{ secrets.TARGET_READ_TOKEN }}
+      # TARGET_PUSH_TOKEN: ${{ secrets.TARGET_PUSH_TOKEN }}
