@@ -136,7 +136,7 @@ Existing consumers (no `target`) must not change behaviour.
 
 - Every new behaviour is gated on `config.target`. Without it: one repository, branch `agent/issue-<n>`, today's PR title, body, marker, `Closes #n`, push-on-BLOCKED, `close-merged.yml` — code paths unchanged.
 - New workflow secrets are optional; new steps are skipped when `target` is absent. Callers' `agent.yml` needs no edit.
-- `verdict.json` only gains fields (`targets`), never renames or drops one, so readers (Morning, agent-memory) keep working.
+- `verdict.json` only gains fields (`targets`), never renames or drops one, so tools that read it keep working.
 - **Release:** built on a branch and tagged `v2`. `v1` stays at `d969ea7` until v2 has run real tasks: first in the target consumer, then one smoke task in an existing consumer pinned to `@v2`. Moving `v1` is a separate decision.
 - **Proof:** the existing test suite passes with no edits to existing tests. A new test runs the full fake-agent pipeline with a target-less config and asserts the verdict, branch, bundle, PR title and body equal today's output.
 
@@ -156,7 +156,7 @@ Existing consumers (no `target`) must not change behaviour.
 - `merge-stack.mjs` for target PRs (merge them by hand or with the target project's own tooling).
 - Non-GitHub or non-HTTPS submodule URLs; nested submodules beyond what `--recursive` checks out.
 - Multiple unrelated target repositories per consumer.
-- Morning reading the targets marker: a separate change in the Morning repo, against the §8 marker contract.
+- Dashboards or other tools reading the targets marker: their own change, against the §8 marker contract.
 
 ## 13. Decisions
 

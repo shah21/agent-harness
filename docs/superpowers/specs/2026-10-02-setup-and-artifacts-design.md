@@ -4,7 +4,7 @@ _2026-10-02. Extends `2026-10-02-agent-harness-design.md` (§5 config, §6 run f
 
 ## 1. Purpose
 
-Let a project verify work that needs running services — a database, a browser test suite — and keep the evidence when such a check fails. The first consumer is SwingX's Playwright end-to-end test (local Postgres plus Neon's HTTP proxy in Docker), but nothing here knows about SwingX, Docker, databases or Playwright: the harness runs a command the project supplies and copies files the project names.
+Let a project verify work that needs running services — a database, a browser test suite — and keep the evidence when such a check fails. The motivating case is a browser end-to-end suite against a local database in Docker, but nothing here knows about Docker, databases or browsers: the harness runs a command the project supplies and copies files the project names.
 
 Success: a project can add `"setup"` and `"artifacts"` to `agent.config.json`, and a red end-to-end check yields a `BLOCKED` run whose artifact contains the test report (screenshots, traces). Projects that set neither behave exactly as today.
 

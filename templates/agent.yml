@@ -5,7 +5,7 @@ on:
     types: [labeled]
   workflow_dispatch:
   # Resumes tasks paused by usage limits (label agent:waiting). Hourly at :30,
-  # 22:00–08:00 IST (16:30–02:30 UTC); each check that finds nothing ends in
+  # 16:30–02:30 UTC (move it to your night); each check that finds nothing ends in
   # seconds but bills one Actions minute, so keep the window narrow.
   schedule:
     - cron: '30 16-23,0-2 * * *'

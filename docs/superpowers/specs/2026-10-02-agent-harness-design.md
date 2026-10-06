@@ -2,11 +2,10 @@
 
 **Status:** Draft for review
 **Date:** 2026-10-02
-**First consumer:** SwingX (cricket draft game)
 
 ## 1. Purpose
 
-A personal, reusable harness that executes pre-planned coding tasks unattended — overnight, while the author and their Mac sleep — and hands back either a pull request with verified evidence or a clear explanation of why it stopped.
+A personal, reusable harness that executes pre-planned coding tasks unattended — overnight, while the author and their machine sleep — and hands back either a pull request with verified evidence or a clear explanation of why it stopped.
 
 ```
 Evening:  label task issues "agent"
@@ -44,7 +43,7 @@ Built on these principles:
 
 All work artefacts live in the **project** repo. The harness repo holds only machinery and knows nothing about any specific project.
 
-| Lives in project repo (e.g. SwingX) | Lives in `agent-harness` |
+| Lives in the project repo | Lives in `agent-harness` |
 |---|---|
 | Specs and plans (`docs/superpowers/...`) | `.github/workflows/run-task.yml` (reusable, `on: workflow_call`) |
 | Task issues, labels, comments | `harness/run.sh` (thin orchestrator) |
@@ -60,7 +59,7 @@ The harness repo is **public** (it contains no secrets), so callers need no extr
 An issue body must contain:
 
 ```
-plan: docs/superpowers/plans/2026-09-26-cricket-draft-mvp.md
+plan: docs/superpowers/plans/2026-09-26-example.md
 task: 3
 ```
 
@@ -229,8 +228,8 @@ Layers 1–2 run in the harness repo's CI on every push. The `v1` tag is created
 
 1. Build harness; layers 1–2 green.
 2. Sandbox repo; layer 3 green; tag `v1`.
-3. SwingX setup (author): push to GitHub; `gh secret set CLAUDE_CODE_OAUTH_TOKEN`; enable *Settings → Actions → Allow GitHub Actions to create and approve pull requests*; add `agent.config.json` and `agent.yml`; create labels.
-4. First real night: one SwingX task, then two stacked tasks.
+3. First consumer setup (author): push to GitHub; `gh secret set CLAUDE_CODE_OAUTH_TOKEN`; enable *Settings → Actions → Allow GitHub Actions to create and approve pull requests*; add `agent.config.json` and `agent.yml`; create labels.
+4. First real night: one task, then two stacked tasks.
 
 ### Known limitation
 
