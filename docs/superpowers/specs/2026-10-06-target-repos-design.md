@@ -30,7 +30,7 @@ One optional field in `agent.config.json`:
 - **`path`** (required) — where it is cloned, relative to the consumer root. Must be relative, no `..`, and ignored by the consumer's `.gitignore`; otherwise the run ends `BLOCKED (harness): target path "<p>" is not git-ignored`. This keeps the consumer's own diff free of target files.
 - **`branch`** — branch-name template. Variables: `{slug}` (task title, lowercased, non-alphanumerics → `-`, trimmed to 50 chars), `{issue}`, `{task}`, `{type}` (a conventional-commit type prefixing the task title, `## Task 3: feat: …` → `feat`, stripped from `{slug}`; one of `feat fix chore refactor test docs perf`; default `fix`). The result must match `^[a-z0-9][a-z0-9._/-]{0,99}$`, else BLOCKED (harness). Default `agent/issue-{issue}`. The same name is used in every changed repository.
 - **`pr.title`** — template; adds `{taskTitle}`. Default `Task {task}: {taskTitle}` (today's).
-- **`pr.body`** — path in the consumer repo to a Markdown template. Variables: `{summary}` (the report's SUMMARY), `{changedFiles}` (list for that repo), `{checks}` (one line per check), `{related}` (links to the other PRs of the same task). Default: today's body **without** the `agent-task` marker or `Closes #n` line, since they point at the consumer.
+- **`pr.body`** — path in the consumer repo to a Markdown template. Variables: `{summary}` (the report's SUMMARY), `{changedFiles}` (list for that repo), `{checks}` (one line per check), `{related}` (links to the other PRs of the same task). Default: `## Summary`, `## Changed files`, `## Checks`, then `{related}`; no `agent-task` marker, no `Closes #n`, nothing about the harness or the consumer. `{related}` is filled at publish time; every other variable at run time.
 - **`author`** — commit identity for the agent's commits in target repos. Default today's `agent-harness` identity.
 - Submodules are discovered from the superproject's `.gitmodules` (`https://github.com/<owner>/<name>.git` URLs only; anything else ends BLOCKED (harness) naming the URL). No per-submodule config.
 
@@ -63,7 +63,7 @@ Today: checkout consumer → install → setup → baseline → agent → clean 
 6. clean + reinstall + setup — **the clean also runs in each target repo** (`git clean -ffdX`)
 7. verify → collect artifacts (unchanged)
 8. **gate over the combined diff** (below)
-9. **bundle each repository with commits** to `<out>/bundles/<owner>__<name>.bundle`; write `<out>/targets.json`: `[{repo, path, branch, base, baseSha, commits}]`. The consumer keeps `branch.bundle` as today.
+9. **bundle each repository with commits** to `<out>/bundles/<owner>__<name>.bundle` as a thin bundle (`<baseSha>..<branch>`), so the artifact holds only the task's commits, not the repository's history; record `targets` in the verdict: `[{repo, path, role, branch, base, baseSha, commits, bundle, prTitle, prBody}]`. The consumer keeps `branch.bundle` as today.
 
 Gate (`gate.mjs`) is unchanged in logic; its inputs become combined:
 
@@ -74,7 +74,7 @@ Gate (`gate.mjs`) is unchanged in logic; its inputs become combined:
 - New block: a submodule has commits but the superproject's commit does not move its pointer to the submodule branch tip → `BLOCKED (gate): submodule <path> changed but the superproject does not point at it`. Without this the superproject PR would build against the old submodule.
 - The agent left a target repo on another branch → BLOCKED (gate), as for the consumer today.
 
-`verdict.json` gains `targets` (the `targets.json` content). It is absent without a target.
+`verdict.json` gains `targets` and `consumerCommits` (the consumer's own commit count). Both are absent without a target.
 
 ## 5. Agent prompt
 
@@ -108,11 +108,11 @@ Today a task bases on the open `agent/issue-<n>` PR of the highest earlier task 
 
 READY_FOR_QA with a target:
 
-1. Push each repository's bundle in §3 order (submodules, then superproject) with `TARGET_PUSH_TOKEN`, from a fresh empty repository with hooks disabled, as today. `--force` only to a branch whose name came from this run's template.
+1. Push each repository's bundle in §3 order (submodules, then superproject) with `TARGET_PUSH_TOKEN`: in a fresh empty repository with hooks disabled, fetch the base commit (`--depth=1`) from the target, then the thin bundle, then push. `--force` only to a branch whose name came from this run's template.
 2. Open a **draft** PR per pushed repository (`gh pr create --draft`), or update the open one for that head. Base per §7. Title and body from §2 templates; `{related}` lists the other PRs, filled in a second pass once all exist.
 3. Consumer commits, if any, published exactly as today.
 4. Issue comment: today's READY line, then one line per PR, then the **targets marker**:
-   `<!-- agent-targets {"prs":[{"repo":"owner/sub","number":45,"branch":"fix/x","base":"main"},…]} -->`
+   `<!-- agent-targets {"prs":[{"repo":"owner/sub","number":45,"branch":"fix/x","base":"main","role":"sub"},…]} -->` (`role` is `sub` or `super`)
    The marker is the only link from the queue to the target PRs; nothing in the target repos points back.
 5. A push or PR failure in any repository → BLOCKED (harness) naming the step and repository; PRs already opened stay and are listed in the comment.
 
