@@ -56,3 +56,51 @@ test('the commit author comes from target.author', async () => {
   const author = execFileSync('git', ['log', '-1', '--format=%an <%ae>'], { cwd: join(projectDir, 'target'), encoding: 'utf8' }).trim();
   assert.equal(author, 'Jane Doe <jane@example.com>');
 });
+
+test('READY with target commits: combined counts, thin bundles and PR text in the verdict', async () => {
+  const { verdict, outDir, remotes } = await runTarget({ agent: 'target-honest.sh' });
+  assert.equal(verdict.outcome, 'READY_FOR_QA', JSON.stringify(verdict.reasons));
+  assert.equal(verdict.consumerCommits, 0);
+  assert.equal(verdict.commits, 2);
+  assert.deepEqual(verdict.targets.map(({ repo, path, role, branch, base, commits, bundle }) => ({ repo, path, role, branch, base, commits, bundle })), [
+    { repo: 'o/sub', path: 'target/packages/core', role: 'sub', branch: 'fix/add-greeting', base: null, commits: 1, bundle: 'bundles/o__sub.bundle' },
+    { repo: 'o/super', path: 'target', role: 'super', branch: 'fix/add-greeting', base: null, commits: 1, bundle: 'bundles/o__super.bundle' },
+  ]);
+  assert.ok(verdict.diff.some((d) => d.path === 'target/packages/core/lib.txt'));
+  const sup = verdict.targets[1];
+  assert.equal(sup.prTitle, 'Task 1: Add greeting');
+  assert.match(sup.prBody, /## Summary\nDid the task\./);
+  // Thin bundle: it needs the base commit, which the remote has.
+  execFileSync('git', ['clone', '-q', '--bare', remotes.super, join(outDir, 'verify.git')]);
+  execFileSync('git', ['bundle', 'verify', join(outDir, sup.bundle)], { cwd: join(outDir, 'verify.git'), stdio: 'ignore' });
+});
+
+test('a submodule change the superproject does not point at blocks', async () => {
+  const { verdict } = await runTarget({ agent: 'target-no-pointer.sh' });
+  assert.equal(verdict.kind, 'gate');
+  assert.deepEqual(verdict.reasons, ['submodule target/packages/core changed but the superproject does not point at it']);
+});
+
+test('editing CI inside the target blocks', async () => {
+  const { verdict } = await runTarget({ agent: 'target-edit-ci.sh' });
+  assert.equal(verdict.kind, 'gate');
+  assert.match(verdict.reasons[0], /protected paths: target\/\.github\/workflows\/x\.yml/);
+});
+
+test('switching branch inside the target blocks', async () => {
+  const { verdict } = await runTarget({ agent: 'target-switch-branch.sh' });
+  assert.deepEqual(verdict.reasons, ['agent switched target to branch "elsewhere"; work must stay on fix/add-greeting']);
+});
+
+test('consumer-only commits leave targets with zero commits and no PR text', async () => {
+  const { verdict } = await runTarget({ agent: 'honest.sh' });
+  assert.equal(verdict.outcome, 'READY_FOR_QA', JSON.stringify(verdict.reasons));
+  assert.equal(verdict.consumerCommits, 1);
+  assert.ok(verdict.targets.every((t) => t.commits === 0 && t.bundle === null && t.prBody === null));
+});
+
+test('a parent base from the selection is recorded per repository', async () => {
+  const { verdict } = await runTarget({ agent: 'target-honest.sh', selection: { targets: { superBranch: 'main', bases: { 'o/super': 'fix/prev' } } } });
+  assert.equal(verdict.targets.find((t) => t.role === 'super').base, 'fix/prev');
+  assert.equal(verdict.targets.find((t) => t.role === 'sub').base, null);
+});
