@@ -24,7 +24,8 @@ permissions:
 
 jobs:
   agent:
-    if: github.event_name != 'issues' || github.event.label.name == 'agent'
+    # Public repository: only the owner's own label starts a run.
+    if: github.event_name != 'issues' || (github.event.label.name == 'agent' && github.event.sender.login == github.repository_owner)
     uses: shah21/agent-harness/.github/workflows/run-task.yml@v1
     with:
       harness_repo: shah21/agent-harness
