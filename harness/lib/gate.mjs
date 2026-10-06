@@ -8,7 +8,7 @@ function blocked(kind, reasons, extra = {}) {
 }
 
 // Rows are evaluated in spec order (§7); the first match wins.
-export function decide({ agent, reportText, commits, diff, checks, config }) {
+export function decide({ agent, reportText, commits, diff, checks, config, pointerErrors = [] }) {
   if (agent.timedOut) return blocked('agent', ['agent timed out before finishing']);
   if (agent.exitCode !== 0) {
     if (agent.authFailed) return blocked('agent', ['Claude authentication failed (401): check the CLAUDE_CODE_OAUTH_TOKEN secret']);
@@ -28,6 +28,7 @@ export function decide({ agent, reportText, commits, diff, checks, config }) {
   if (protectedHits.length) {
     return blocked('gate', [`changes touch protected paths: ${protectedHits.join(', ')}`], { report });
   }
+  if (pointerErrors.length) return blocked('gate', pointerErrors, { report });
 
   const removedTests = diff
     .filter((d) => (d.status === 'D' && matchesAny(d.path, config.testGlobs)) || (d.status === 'R' && matchesAny(d.oldPath, config.testGlobs)))
