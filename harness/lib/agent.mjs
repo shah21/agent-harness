@@ -3,10 +3,15 @@ export const ALLOWED_TOOLS = 'Read,Edit,Write,Glob,Grep,Bash';
 // The agent must never see a GitHub token; only these variables pass through.
 const ENV_ALLOWLIST = ['PATH', 'HOME', 'USER', 'LANG', 'LC_ALL', 'TERM', 'TMPDIR', 'SHELL', 'CI', 'CLAUDE_CODE_OAUTH_TOKEN'];
 
+// Claude Code moves a shell command that outlives its tool timeout (120 s by default) to the
+// background; unattended, the agent then ends its turn waiting for a notification that never
+// comes. Checks run under `timeout 600`, so this sits just above that and they stay in the foreground.
+export const SHELL_TIMEOUTS = { BASH_DEFAULT_TIMEOUT_MS: '660000', BASH_MAX_TIMEOUT_MS: '660000' };
+
 export function agentEnv(source, extra) {
   const env = {};
   for (const key of ENV_ALLOWLIST) if (source[key] !== undefined) env[key] = source[key];
-  return { ...env, ...extra };
+  return { ...env, ...SHELL_TIMEOUTS, ...extra };
 }
 
 // addDir lets the agent write its report outside the project checkout.
