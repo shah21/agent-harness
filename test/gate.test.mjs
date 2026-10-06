@@ -92,3 +92,17 @@ test('warnings: check status mismatch, changed files mismatch, dependency files'
   const deps = run({ diff: [{ status: 'M', path: 'package.json' }], reportText: ready({ files: '- package.json' }) });
   assert.deepEqual(deps.warnings, ['dependency files changed: package.json']);
 });
+
+test('submodule pointer errors block after protected paths', () => {
+  const errors = ['submodule target/sub changed but the superproject does not point at it'];
+  const d = run({ pointerErrors: errors });
+  assert.equal(d.outcome, 'BLOCKED');
+  assert.equal(d.kind, 'gate');
+  assert.deepEqual(d.reasons, errors);
+  const p = run({ pointerErrors: errors, diff: [{ status: 'M', path: '.github/workflows/x.yml' }] });
+  assert.match(p.reasons[0], /protected paths/);
+});
+
+test('empty pointer errors change nothing', () => {
+  assert.equal(run({ pointerErrors: [] }).outcome, 'READY_FOR_QA');
+});
