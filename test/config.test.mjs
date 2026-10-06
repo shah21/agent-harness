@@ -90,3 +90,39 @@ test('rejects artifact globs that are not relative paths inside the project', ()
   assert.throws(() => loadConfig(JSON.stringify({ ...base, artifacts: ['a/../../x'] })), /must be a relative path inside the project/);
   assert.throws(() => loadConfig(JSON.stringify({ ...base, artifacts: [''] })), /must be a relative path inside the project/);
 });
+
+test('target is null by default', () => {
+  assert.equal(loadConfig(minimal).target, null);
+});
+
+test('accepts a target and fills its defaults', () => {
+  const c = loadConfig(JSON.stringify({ install: 'x', checks: { t: 'y' }, target: { repo: 'o/super', path: 'target' } }));
+  assert.deepEqual(c.target, {
+    repo: 'o/super', path: 'target', branch: 'agent/issue-{issue}',
+    pr: { title: 'Task {task}: {taskTitle}', body: null }, author: null,
+  });
+});
+
+test('accepts a full target', () => {
+  const target = {
+    repo: 'o/super', path: 'work/super', branch: '{type}/{slug}',
+    pr: { title: '{taskTitle}', body: '.github/agent-pr-body.md' },
+    author: { name: 'Jane Doe', email: 'jane@example.com' },
+  };
+  assert.deepEqual(loadConfig(JSON.stringify({ install: 'x', checks: { t: 'y' }, target })).target, target);
+});
+
+test('rejects a bad target', () => {
+  const load = (target) => loadConfig(JSON.stringify({ install: 'x', checks: { t: 'y' }, target }));
+  assert.throws(() => load('o/super'), /"target" must be an object/);
+  assert.throws(() => load({ path: 't' }), /"target\.repo" must be "owner\/name"/);
+  assert.throws(() => load({ repo: 'o/super' }), /"target\.path" must be a relative path inside the project/);
+  for (const path of ['/abs', '../up', 'a/../b', 't/', '.', '']) {
+    assert.throws(() => load({ repo: 'o/s', path }), /"target\.path" must be a relative path inside the project/, path);
+  }
+  assert.throws(() => load({ repo: 'o/s', path: 't', branch: '{nope}' }), /"target\.branch": branch template uses unknown variable \{nope\}/);
+  assert.throws(() => load({ repo: 'o/s', path: 't', branch: 'Upper/{slug}' }), /"target\.branch": branch name/);
+  assert.throws(() => load({ repo: 'o/s', path: 't', pr: { title: '{bad}' } }), /"target\.pr\.title": template uses unknown variable \{bad\}/);
+  assert.throws(() => load({ repo: 'o/s', path: 't', pr: { body: '../x.md' } }), /"target\.pr\.body" must be a relative path inside the project/);
+  assert.throws(() => load({ repo: 'o/s', path: 't', author: { name: 'x' } }), /"target\.author" must have string "name" and "email"/);
+});
