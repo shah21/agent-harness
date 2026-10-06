@@ -1,4 +1,5 @@
 import { taskMarker } from './queue.mjs';
+import { fill, splitTaskType, RELATED_TOKEN, targetsMarker } from './target.mjs';
 
 function checkTable(checks) {
   const rows = Object.entries(checks ?? {}).map(([name, c]) => {
@@ -72,9 +73,29 @@ export function renderPrBody(v) {
   ].join('\n');
 }
 
-export function renderComment(v, { runUrl, prUrl } = {}) {
+const DEFAULT_TARGET_BODY = '## Summary\n{summary}\n\n## Changed files\n{changedFiles}\n\n## Checks\n{checks}\n\n{related}\n';
+
+export function renderTargetPr({ titleTemplate, bodyTemplate, issue, task, taskTitle, report, checks, changedFiles }) {
+  const vars = {
+    issue: String(issue),
+    task: String(task),
+    taskTitle: splitTaskType(taskTitle).title,
+    summary: report.summary,
+    changedFiles: changedFiles.map((p) => `- \`${p}\``).join('\n') || '- (none)',
+    checks: Object.entries(checks ?? {}).map(([name, c]) => `- ${name}: ${c.ok ? 'PASS' : 'FAIL'}`).join('\n'),
+    related: RELATED_TOKEN,
+  };
+  return { prTitle: fill(titleTemplate, vars), prBody: fill(bodyTemplate ?? DEFAULT_TARGET_BODY, vars) };
+}
+
+export function renderComment(v, { runUrl, prUrl, targetPrs } = {}) {
   if (v.outcome === 'READY_FOR_QA') {
-    return `✅ **READY_FOR_QA** — ${prUrl ?? 'PR opened'}\n\n${runLink(v, runUrl)}`;
+    const main = prUrl ?? targetPrs?.find((p) => p.role === 'super')?.url ?? 'PR opened';
+    const head = `✅ **READY_FOR_QA** — ${main}\n\n${runLink(v, runUrl)}`;
+    if (!targetPrs?.length) return head;
+    const list = targetPrs.map((p) => `- \`${p.repo}\` #${p.number} (draft): ${p.url}`).join('\n');
+    const marker = targetsMarker(targetPrs.map(({ repo, number, branch, base, role }) => ({ repo, number, branch, base, role })));
+    return `${head}\n\n${list}\n\n${marker}`;
   }
   if (v.outcome === 'WAITING') {
     return [
@@ -94,7 +115,9 @@ export function renderComment(v, { runUrl, prUrl } = {}) {
   }
   if (v.checks && Object.keys(v.checks).length) lines.push('', checkTable(v.checks), ...checkTails(v.checks));
   if (v.warnings?.length) lines.push('', '**Warnings**', bullets(v.warnings));
-  if (v.commits > 0) lines.push('', `The attempt was pushed to \`${v.branch}\` for inspection.`);
+  const pushed = v.targets ? v.consumerCommits : v.commits;
+  if (pushed > 0) lines.push('', `The attempt was pushed to \`${v.branch}\` for inspection.`);
+  if (v.targets?.some((t) => t.commits > 0)) lines.push('', 'Changes to the target repositories were not pushed; their bundles are in the run artifact.');
   lines.push('', runLink(v, runUrl), '', 'To retry: remove `agent:blocked` and add `agent`.');
   return lines.join('\n');
 }
