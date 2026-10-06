@@ -6,7 +6,7 @@ _2026-10-06. Extends `2026-10-02-agent-harness-design.md` (§5 config, §6 run f
 
 Let a task change code in a repository other than the one that queues it. The queue (task issues, plans, `agent.config.json`, workflows) stays in a repository the author owns, the **consumer**; the code change lands as draft PRs in a **target** repository and its submodules, which carry no harness files at all.
 
-The motivating case: a work superproject with two private submodules, which may not contain personal tooling, queued from a private repository the author owns that already clones the superproject in CI. Nothing here knows about that project: the harness clones the repository the config names and follows its `.gitmodules`.
+The motivating case: a superproject with private submodules that must not contain harness files, queued from a separate private repository that already clones the superproject in CI. Nothing here knows about that project: the harness clones the repository the config names and follows its `.gitmodules`.
 
 Success: a consumer adds `"target"` to `agent.config.json` and two secrets; a `READY_FOR_QA` task yields one draft PR per changed repository (submodules and superproject), with branch names and PR text the consumer chooses, and the task issue records where they are. **A consumer that does not set `"target"` behaves exactly as today** (§10).
 

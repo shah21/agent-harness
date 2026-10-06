@@ -224,10 +224,10 @@ test('fill replaces known variables once and rejects unknown ones', () => {
 });
 
 test('parseGitmodules reads path and GitHub repo, ignoring other keys', () => {
-  const text = '[submodule "frontend/ee"]\n\tpath = frontend/ee\n\turl = https://github.com/o/ee-frontend.git\n    branch = lts\n[submodule "server/ee"]\n\tpath = server/ee\n\turl = https://github.com/o/ee-server\n';
+  const text = '[submodule "packages/ui"]\n\tpath = packages/ui\n\turl = https://github.com/o/ui.git\n    branch = stable\n[submodule "packages/core"]\n\tpath = packages/core\n\turl = https://github.com/o/core\n';
   assert.deepEqual(parseGitmodules(text), [
-    { path: 'frontend/ee', repo: 'o/ee-frontend' },
-    { path: 'server/ee', repo: 'o/ee-server' },
+    { path: 'packages/ui', repo: 'o/ui' },
+    { path: 'packages/core', repo: 'o/core' },
   ]);
   assert.deepEqual(parseGitmodules(''), []);
 });
@@ -887,8 +887,8 @@ function makeRemotes(root) {
   git(subWork, 'push', '-q', sub, 'main');
   execFileSync('git', ['init', '-q', '-b', 'main', supWork]);
   writeFileSync(join(supWork, 'app.txt'), 'app\n');
-  git(supWork, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub, 'server/ee');
-  git(supWork, 'config', '-f', '.gitmodules', 'submodule.server/ee.url', 'https://github.com/o/sub.git');
+  git(supWork, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub, 'packages/core');
+  git(supWork, 'config', '-f', '.gitmodules', 'submodule.packages/core.url', 'https://github.com/o/sub.git');
   git(supWork, 'add', '-A');
   git(supWork, 'commit', '-qm', 'super base');
   git(supWork, 'push', '-q', sup, 'main');
@@ -942,15 +942,15 @@ export async function runTarget({ agent, cmd, mutate, gitignore, targetConfig, s
 ```sh
 set -e
 . "$(dirname "$0")/lib.sh"
-cd target/server/ee
+cd target/packages/core
 echo b > lib.txt
 git add -A
 git commit -qm "Change lib"
 cd ../..
-git add server/ee
+git add packages/core
 git commit -qm "Point at the new lib"
 cd ..
-ready_report target/server/ee/lib.txt target/server/ee
+ready_report target/packages/core/lib.txt target/packages/core
 ```
 
 `test/fake-agents/env-dump.sh`:
@@ -1215,12 +1215,12 @@ git commit -m "feat: prepare target clones, branch them and tell the agent"
 ```sh
 set -e
 . "$(dirname "$0")/lib.sh"
-cd target/server/ee
+cd target/packages/core
 echo b > lib.txt
 git add -A
 git commit -qm "Change lib"
 cd ../../..
-ready_report target/server/ee/lib.txt
+ready_report target/packages/core/lib.txt
 ```
 
 `test/fake-agents/target-edit-ci.sh`:
@@ -1255,10 +1255,10 @@ test('READY with target commits: combined counts, thin bundles and PR text in th
   assert.equal(verdict.consumerCommits, 0);
   assert.equal(verdict.commits, 2);
   assert.deepEqual(verdict.targets.map(({ repo, path, role, branch, base, commits, bundle }) => ({ repo, path, role, branch, base, commits, bundle })), [
-    { repo: 'o/sub', path: 'target/server/ee', role: 'sub', branch: 'fix/add-greeting', base: null, commits: 1, bundle: 'bundles/o__sub.bundle' },
+    { repo: 'o/sub', path: 'target/packages/core', role: 'sub', branch: 'fix/add-greeting', base: null, commits: 1, bundle: 'bundles/o__sub.bundle' },
     { repo: 'o/super', path: 'target', role: 'super', branch: 'fix/add-greeting', base: null, commits: 1, bundle: 'bundles/o__super.bundle' },
   ]);
-  assert.ok(verdict.diff.some((d) => d.path === 'target/server/ee/lib.txt'));
+  assert.ok(verdict.diff.some((d) => d.path === 'target/packages/core/lib.txt'));
   const sup = verdict.targets[1];
   assert.equal(sup.prTitle, 'Task 1: Add greeting');
   assert.match(sup.prBody, /## Summary\nDid the task\./);
@@ -1270,7 +1270,7 @@ test('READY with target commits: combined counts, thin bundles and PR text in th
 test('a submodule change the superproject does not point at blocks', async () => {
   const { verdict } = await runTarget({ agent: 'target-no-pointer.sh' });
   assert.equal(verdict.kind, 'gate');
-  assert.deepEqual(verdict.reasons, ['submodule target/server/ee changed but the superproject does not point at it']);
+  assert.deepEqual(verdict.reasons, ['submodule target/packages/core changed but the superproject does not point at it']);
 });
 
 test('editing CI inside the target blocks', async () => {
