@@ -1,4 +1,5 @@
 import { parseTaskRef } from './issue.mjs';
+import { latestTargets } from './target.mjs';
 
 const MARKER_RE = /<!-- agent-task plan=(\S+) task=(\d+) issue=(\d+) -->/;
 
@@ -13,7 +14,26 @@ export function parseTaskMarker(body) {
 
 const labelNames = (labels) => (labels ?? []).map((l) => (typeof l === 'string' ? l : l.name));
 
-export function selectNext({ issues, prs, defaultBranch }) {
+function targetParent({ ready, plan, task }) {
+  const parent = (ready ?? [])
+    .map((r) => ({ ref: parseTaskRef(r.body), prs: latestTargets(r.comments) }))
+    .filter((p) => !p.ref.error && p.prs && p.ref.plan === plan && p.ref.task < task)
+    .sort((a, b) => b.ref.task - a.ref.task)[0];
+  if (!parent) return null;
+  return {
+    superBranch: parent.prs.find((p) => p.role === 'super')?.branch ?? null,
+    bases: Object.fromEntries(parent.prs.map((p) => [p.repo, p.branch])),
+  };
+}
+
+export function targetsToCheck(ready) {
+  return (ready ?? []).flatMap((r) => {
+    const sup = latestTargets(r.comments)?.find((p) => p.role === 'super');
+    return sup ? [{ issue: r.number, repo: sup.repo, number: sup.number }] : [];
+  });
+}
+
+export function selectNext({ issues, prs, defaultBranch, ready = [] }) {
   const all = issues.map((i) => ({ ...i, labels: labelNames(i.labels), ref: parseTaskRef(i.body) }));
   const queued = all.filter((i) => (i.labels.includes('agent') || i.labels.includes('agent:waiting')) && !i.labels.includes('agent:running'));
   if (queued.length === 0) return { issue: null };
@@ -48,5 +68,6 @@ export function selectNext({ issues, prs, defaultBranch }) {
     .filter((p) => p.marker && p.marker.plan === plan && p.marker.task < task)
     .sort((a, b) => b.marker.task - a.marker.task)[0];
 
-  return { issue, plan, task, base: parent ? parent.head : defaultBranch, skip: null };
+  const targets = targetParent({ ready, plan, task });
+  return { issue, plan, task, base: parent ? parent.head : defaultBranch, skip: null, ...(targets ? { targets } : {}) };
 }
