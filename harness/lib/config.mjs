@@ -1,3 +1,5 @@
+import { renderBranch, fill, TEMPLATE_VARS } from './target.mjs';
+
 const ALWAYS_PROTECTED = ['.github/**', 'agent.config.json'];
 const DEFAULTS = {
   model: 'sonnet',
@@ -47,6 +49,36 @@ function artifactGlobs(value) {
   return globs;
 }
 
+const relativeInside = (p) => typeof p === 'string' && p !== '' && !p.startsWith('/') && !p.split('/').some((s) => s === '' || s === '.' || s === '..');
+
+function targetConfig(value) {
+  if (value === undefined) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('"target" must be an object');
+  const { repo, path, branch = 'agent/issue-{issue}', pr = {}, author = null } = value;
+  if (typeof repo !== 'string' || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new Error('"target.repo" must be "owner/name"');
+  if (!relativeInside(path)) throw new Error('"target.path" must be a relative path inside the project');
+  if (typeof branch !== 'string') throw new Error('"target.branch" must be a string');
+  try {
+    renderBranch(branch, { issue: 1, task: 1, taskTitle: 'feat: check' });
+  } catch (e) {
+    throw new Error(`"target.branch": ${e.message}`);
+  }
+  if (!pr || typeof pr !== 'object' || Array.isArray(pr)) throw new Error('"target.pr" must be an object');
+  const title = pr.title ?? 'Task {task}: {taskTitle}';
+  if (typeof title !== 'string' || !title.trim()) throw new Error('"target.pr.title" must be a non-empty string');
+  try {
+    fill(title, Object.fromEntries(TEMPLATE_VARS.map((v) => [v, ''])));
+  } catch (e) {
+    throw new Error(`"target.pr.title": ${e.message}`);
+  }
+  const body = pr.body ?? null;
+  if (body !== null && !relativeInside(body)) throw new Error('"target.pr.body" must be a relative path inside the project');
+  if (author !== null && (typeof author?.name !== 'string' || typeof author?.email !== 'string')) {
+    throw new Error('"target.author" must have string "name" and "email"');
+  }
+  return { repo, path, branch, pr: { title, body }, author: author && { name: author.name, email: author.email } };
+}
+
 export function loadConfig(text) {
   let raw;
   try {
@@ -94,5 +126,6 @@ export function loadConfig(text) {
     testGlobs: raw.testGlobs === undefined ? DEFAULTS.testGlobs : stringArray(raw.testGlobs, 'testGlobs'),
     env: envMap(raw.env),
     artifacts: artifactGlobs(raw.artifacts),
+    target: targetConfig(raw.target),
   };
 }
