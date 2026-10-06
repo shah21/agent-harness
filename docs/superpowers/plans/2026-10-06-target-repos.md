@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-06-target-repos-design.md`
 
+**Execution:** Tasks 2–10 run as agent tasks (one issue each, label `agent`). Task 1 was done during setup, together with connecting this repository to the harness. Task 11 changes `.github/**`, which the harness protects, so it is done by hand. Task 12 is a manual release.
+
 ## Global Constraints
 
 - No new dependencies; Node built-ins only.
@@ -33,6 +35,8 @@
 ---
 
 ## Task 1: Compatibility golden test
+
+_Done during setup (`test/compat.test.mjs`, `test/golden/no-target.json`). `test/golden/**` is a protected path in `agent.config.json`: an agent task can never re-record it._
 
 Locks today's observable output for a target-less consumer before anything changes.
 
@@ -1987,6 +1991,8 @@ git commit -m "feat: publish target bundles as draft PRs"
 ---
 
 ## Task 11: Workflow, caller template and README
+
+_Manual: `.github/**` is protected, so an agent run would always end BLOCKED._
 
 **Files:**
 - Modify: `.github/workflows/run-task.yml`
