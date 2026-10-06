@@ -14,6 +14,8 @@ import { tailLog } from './lib/tail.mjs';
 import { parsePlanTask, comparePlan, conformanceWarnings } from './lib/conformance.mjs';
 import { collectArtifacts } from './lib/artifacts.mjs';
 import { agentCommand, agentEnv, renderPrompt, claudeTokens, probeCommand, detectUsageLimit, detectAuthFailure, servicesRule } from './lib/agent.mjs';
+import { prepareTarget, startTargetBranches, resetTargets } from './lib/target-run.mjs';
+import { targetPromptSection } from './lib/target.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -78,7 +80,7 @@ async function runChecks(config, projectDir, logsDir, phase, env) {
   return results;
 }
 
-export async function runTask({ projectDir, issue, outDir, baseBranch, configPath, env = process.env }) {
+export async function runTask({ projectDir, issue, outDir, baseBranch, configPath, selection = null, env = process.env }) {
   projectDir = resolve(projectDir);
   outDir = resolve(outDir);
   const logsDir = join(outDir, 'logs');
@@ -102,7 +104,7 @@ export async function runTask({ projectDir, issue, outDir, baseBranch, configPat
   const state = { agentRan: false, baseSha: null };
 
   try {
-    return await execute({ projectDir, issue, outDir, logsDir, reportPath, configPath, env, meta, finish, state });
+    return await execute({ projectDir, issue, outDir, logsDir, reportPath, configPath, selection, env, meta, finish, state });
   } catch (e) {
     // The agent can leave the repository in any state; a crash here must still
     // produce a BLOCKED verdict rather than no verdict at all.
@@ -117,7 +119,7 @@ export async function runTask({ projectDir, issue, outDir, baseBranch, configPat
   }
 }
 
-async function execute({ projectDir, issue, outDir, logsDir, reportPath, configPath: configOverride, env, meta, finish, state }) {
+async function execute({ projectDir, issue, outDir, logsDir, reportPath, configPath: configOverride, selection, env, meta, finish, state }) {
   // The workflow passes the default branch's config so stacked bases never run a stale one.
   const configPath = configOverride ?? join(projectDir, 'agent.config.json');
   if (!existsSync(configPath)) return finish(blocked('harness', 'agent.config.json not found in project root'));
@@ -143,6 +145,16 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
   if (!meta.taskTitle) return finish(blocked('gate', `bad task reference: no "Task ${ref.task}:" heading in ${ref.plan}`));
   meta.model = issue.labels.includes('agent:opus') ? 'opus' : config.model;
 
+  // Validate the target before any Claude usage or slow work.
+  let target = null;
+  if (config.target) {
+    target = prepareTarget({
+      projectDir, outDir, target: config.target, issue, task: ref.task, taskTitle: meta.taskTitle,
+      parentBases: selection?.targets?.bases ?? null,
+    });
+    if (target.error) return finish(blocked('harness', target.error));
+  }
+
   // Accounts: probe each before any slow work. Tests that replace the agent
   // and give no probe command skip probing.
   const tokens = claudeTokens(env);
@@ -163,6 +175,7 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
   git(projectDir, 'checkout', '-q', '-B', meta.branch);
   git(projectDir, 'config', 'user.name', 'agent-harness');
   git(projectDir, 'config', 'user.email', 'agent-harness@users.noreply.github.com');
+  if (target) startTargetBranches(target, config.target.author);
 
   const install = (logName) =>
     runWithTimeout(config.install, {
@@ -226,8 +239,11 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
     SERVICES_RULE: servicesRule(Boolean(config.setup)),
     PROTECTED: config.protectedPaths.map((p) => `\`${p}\``).join(', '),
   });
+  const fullPrompt = target
+    ? promptText + targetPromptSection({ path: config.target.path, repo: config.target.repo, branch: target.branch })
+    : promptText;
   const promptFile = join(outDir, 'prompt.md');
-  writeFileSync(promptFile, promptText);
+  writeFileSync(promptFile, fullPrompt);
 
   state.agentRan = true;
   const warnings = [];
@@ -239,7 +255,7 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
     const extra = { ...config.env, REPORT_PATH: reportPath, PROMPT_FILE: promptFile };
     if (attempt.token) extra.CLAUDE_CODE_OAUTH_TOKEN = attempt.token;
     agent = await runWithTimeout(
-      agentCommand({ model: meta.model, maxTurns: config.maxTurns, promptText, addDir: outDir, override: env.AGENT_CMD }),
+      agentCommand({ model: meta.model, maxTurns: config.maxTurns, promptText: fullPrompt, addDir: outDir, override: env.AGENT_CMD }),
       { cwd: projectDir, timeoutSec: config.timeouts.claude, logFile, env: agentEnv(env, extra) },
     );
     const text = readFileSync(logFile, 'utf8');
@@ -250,6 +266,7 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
     git(projectDir, 'checkout', '-q', '-f', meta.branch);
     git(projectDir, 'reset', '-q', '--hard', baseSha);
     git(projectDir, 'clean', '-fdq');
+    if (target) resetTargets(target);
     if (i === accounts.length - 1) return finish({ ...waiting(Math.max(tokens.length, 1)), commits: 0 });
     warnings.push(`usage limit hit on Claude account ${attempt.account}; restarted on account ${accounts[i + 1].account}`);
   }
@@ -275,7 +292,10 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
     // files the agent may have left (build output, installed packages) and
     // install again from the committed manifests.
     // -ff also removes nested repositories, which a single -f skips.
-    git(projectDir, 'clean', '-ffdXq');
+    // The target clone is git-ignored in the consumer, so it is excluded here and cleaned on its own.
+    // With -ff a pathspec exclude alone does not protect a nested repository; un-ignoring it with -e does.
+    git(projectDir, 'clean', '-ffdXq', ...(target ? ['-e', `!${config.target.path}/`, '--', '.', `:(exclude)${config.target.path}`] : []));
+    if (target) for (const r of target.repos) git(r.dir, 'clean', '-ffdXq');
     const reinstall = await install('install-verify.log');
     if (installFailed(reinstall)) {
       return finish({ ...blocked('harness', `install before verification failed (exit ${reinstall.exitCode})`), commits, diff, baseSha });
@@ -311,7 +331,7 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const { values } = parseArgs({
-    options: { project: { type: 'string' }, issue: { type: 'string' }, out: { type: 'string' }, 'base-branch': { type: 'string' }, config: { type: 'string' } },
+    options: { project: { type: 'string' }, issue: { type: 'string' }, out: { type: 'string' }, 'base-branch': { type: 'string' }, config: { type: 'string' }, selection: { type: 'string' } },
   });
   for (const key of ['project', 'issue', 'out', 'base-branch']) {
     if (!values[key]) {
@@ -325,6 +345,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     outDir: values.out,
     baseBranch: values['base-branch'],
     configPath: values.config,
+    selection: values.selection ? JSON.parse(readFileSync(values.selection, 'utf8')) : null,
   });
   console.log(`${verdict.outcome}${verdict.kind ? ` (${verdict.kind})` : ''}: ${verdict.reasons.join('; ') || 'all checks passed'}`);
 }
