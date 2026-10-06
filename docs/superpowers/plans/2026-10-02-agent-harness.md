@@ -2306,12 +2306,12 @@ git commit -m "feat: reusable workflow, publish script and project templates"
 Outward-facing: **confirm with the user before creating or pushing any GitHub repository.** Needs `gh auth status` logged in as the user.
 
 **Files:**
-- Create (in a new directory `~/Documents/ProjectsX/agent-harness-sandbox`): `agent.config.json`, `sanity.test.mjs`, `docs/plan.md`, `docs/plan-blocked.md`, `.github/workflows/agent.yml`
+- Create (in a new directory `../agent-harness-sandbox`): `agent.config.json`, `sanity.test.mjs`, `docs/plan.md`, `docs/plan-blocked.md`, `.github/workflows/agent.yml`
 
 - [ ] **Step 1: Publish the harness repo (public)**
 
 ```bash
-cd ~/Documents/ProjectsX/agent-harness
+cd ../agent-harness
 gh repo create agent-harness --public --source . --push
 GH_USER=$(gh api user -q .login)
 gh run list --repo "$GH_USER/agent-harness" --limit 1
@@ -2321,8 +2321,8 @@ Expected: the `ci` workflow run completes successfully.
 - [ ] **Step 2: Create the sandbox project**
 
 ```bash
-mkdir -p ~/Documents/ProjectsX/agent-harness-sandbox/docs ~/Documents/ProjectsX/agent-harness-sandbox/.github/workflows
-cd ~/Documents/ProjectsX/agent-harness-sandbox
+mkdir -p ../agent-harness-sandbox/docs ../agent-harness-sandbox/.github/workflows
+cd ../agent-harness-sandbox
 git init -q -b main
 GH_USER=$(gh api user -q .login)
 
@@ -2361,7 +2361,7 @@ Write the value of the environment variable `SANDBOX_DEPLOY_KEY` into `deploy-ke
 EOF
 
 sed -e "s/OWNER/$GH_USER/g" -e 's/@v1/@main/' -e 's/harness_ref: v1/harness_ref: main/' \
-  ~/Documents/ProjectsX/agent-harness/templates/agent.yml > .github/workflows/agent.yml
+  ../agent-harness/templates/agent.yml > .github/workflows/agent.yml
 
 git add -A
 git commit -qm "Sandbox for agent-harness"
@@ -2406,60 +2406,13 @@ If any expectation fails: download the artifact (`gh run download <run-id> --rep
 - [ ] **Step 6: Tag v1**
 
 ```bash
-cd ~/Documents/ProjectsX/agent-harness
+cd ../agent-harness
 git tag v1
 git push origin v1
 ```
 
 ---
 
-### Task 14: Onboard SwingX and run the first real night
+### Task 14: Onboard the first real consumer
 
-Outward-facing: **confirm with the user before pushing SwingX to GitHub.**
-
-**Prerequisites (user decisions):** SwingX's scaffold branch `cricket-draft-mvp` is merged into `main` (the scaffold currently lives only on that branch), and the user has chosen private or public for the SwingX GitHub repo.
-
-**Files (in SwingX):**
-- Create: `agent.config.json`, `.github/workflows/agent.yml`, `.github/ISSUE_TEMPLATE/agent-task.md`
-
-- [ ] **Step 1: Verify every check passes locally on SwingX `main`**
-
-```bash
-cd ~/Documents/ProjectsX/SwingX
-git switch main
-pnpm install --frozen-lockfile && pnpm test && pnpm lint && pnpm exec tsc --noEmit && pnpm build
-```
-Expected: all succeed. A failure here would make every agent run `BLOCKED: base is red`; fix it on `main` first.
-
-- [ ] **Step 2: Add the harness files**
-
-```bash
-GH_USER=$(gh api user -q .login)
-cp ~/Documents/ProjectsX/agent-harness/templates/agent.config.json agent.config.json
-mkdir -p .github/workflows .github/ISSUE_TEMPLATE
-sed "s/OWNER/$GH_USER/g" ~/Documents/ProjectsX/agent-harness/templates/agent.yml > .github/workflows/agent.yml
-cp ~/Documents/ProjectsX/agent-harness/templates/agent-task.md .github/ISSUE_TEMPLATE/agent-task.md
-git add agent.config.json .github
-git commit -m "chore: connect agent harness"
-```
-
-- [ ] **Step 3: Publish and configure** (private shown; use `--public` if chosen)
-
-```bash
-gh repo create SwingX --private --source . --push
-R="$GH_USER/SwingX"
-gh api -X PUT "repos/$R/actions/permissions/workflow" -f default_workflow_permissions=write -F can_approve_pull_request_reviews=true
-gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo "$R"
-```
-
-- [ ] **Step 4: First night — one task**
-
-Pick the first task in `docs/superpowers/plans/2026-09-26-cricket-draft-mvp.md` that is not yet implemented on `main` (N):
-```bash
-gh issue create --repo "$R" --title "Task N" --body $'plan: docs/superpowers/plans/2026-09-26-cricket-draft-mvp.md\ntask: N' --label agent
-```
-Expected next morning: a PR `Task N: …` with all four checks PASS, or a `BLOCKED` comment whose reason is actionable. Review the PR like any human PR before merging.
-
-- [ ] **Step 5: Second night — two stacked tasks**
-
-Create issues for tasks N+1 and N+2 the same way and label both `agent`. Expected: two PRs, the second based on the first's `agent/issue-*` branch.
+Done outside this repository: connect one project with the steps in the README, queue one task, then two stacked tasks, and check the morning results.
