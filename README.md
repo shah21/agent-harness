@@ -51,6 +51,31 @@ Checks that need running services (a database, a browser) get them from an optio
 }
 ```
 
+## Target repositories
+
+A task can change a repository other than the one that queues it — for example a superproject with private submodules that must not contain harness files. Add `target` to `agent.config.json`:
+
+```json
+{
+  "target": {
+    "repo": "owner/superproject",
+    "path": "target",
+    "branch": "{type}/{slug}",
+    "pr": { "title": "{taskTitle}", "body": ".github/agent-pr-body.md" },
+    "author": { "name": "Jane Doe", "email": "jane@example.com" }
+  }
+}
+```
+
+- `path` must be git-ignored in the consumer (`target/` in `.gitignore`). Checks run from the consumer root and can `cd` into it. Set `testGlobs` to include target tests, e.g. `"target/**/*.spec.ts"`.
+- `branch` variables: `{type}` (from a `feat:`/`fix:`/`chore:`/`refactor:`/`test:`/`docs:`/`perf:` prefix of the task title, default `fix`), `{slug}`, `{issue}`, `{task}`.
+- PR template variables: `{taskTitle}`, `{task}`, `{issue}`, `{summary}`, `{changedFiles}`, `{checks}`, `{related}`. The default body has no link back to the consumer.
+- Secrets: `TARGET_READ_TOKEN` (clones the superproject and submodules) and `TARGET_PUSH_TOKEN` (pushes branches, opens draft PRs, checks merges); uncomment both lines in `agent.yml`. They may be the same token.
+
+Each changed repository gets a **draft** PR with the same branch name; submodules are pushed before the superproject, which must point at the submodule commits. The task issue's READY comment lists the PRs and carries an `agent-targets` marker: later tasks of the same plan stack on those branches, and the issue closes when the superproject PR merges. A BLOCKED task pushes nothing to target repositories; its bundles stay in the run artifact for 14 days.
+
+The run job holds `TARGET_READ_TOKEN` during one clone step (masked, never written to disk, never in the agent's environment); prefer a read-only token there.
+
 ## Usage limits and a second account
 
 Before any work, each run tries every configured account with one cheap turn. If an account runs out of usage mid-task, the attempt is discarded and the task restarts on the next account. Set the optional secret `CLAUDE_CODE_OAUTH_TOKEN_2` to add a second account. When every account is out, the issue is labelled `agent:waiting`, the queue pauses, and the scheduled trigger in `agent.yml` resumes it.
