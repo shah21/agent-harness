@@ -9,6 +9,11 @@ done
 case "$1 $2" in
   "pr create")
     if [ -n "$GH_FAIL_PR_CREATE" ]; then echo "pull request create failed" >&2; exit 1; fi
+    if [ -n "$GH_FAIL_PR_CREATE_REPO" ] && echo "$*" | grep -q -- "--repo $GH_FAIL_PR_CREATE_REPO "; then echo "pull request create failed" >&2; exit 1; fi
     echo "https://github.com/o/r/pull/9" ;;
+  "pr list")
+    [ -n "$GH_PR_LIST" ] && echo "$GH_PR_LIST" ;;
+  "repo view")
+    echo "main" ;;
 esac
 exit 0
