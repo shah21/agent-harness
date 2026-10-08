@@ -154,9 +154,16 @@ const targetPrs = [
 
 test('ready comment with target PRs lists them and carries the marker', () => {
   const c = renderComment(readyVerdict, { runUrl: 'https://run', targetPrs });
-  assert.match(c, /^✅ \*\*READY_FOR_QA\*\* — https:\/\/github\.com\/o\/super\/pull\/123/);
-  assert.match(c, /- `o\/sub` #45 \(draft\): https:\/\/github\.com\/o\/sub\/pull\/45/);
+  assert.match(c, /^✅ \*\*READY_FOR_QA\*\* — `https:\/\/github\.com\/o\/super\/pull\/123`/);
+  assert.match(c, /- `o\/sub#45` \(draft\): `https:\/\/github\.com\/o\/sub\/pull\/45`/);
   assert.deepEqual(parseTargetsMarker(c), targetPrs.map(({ url, ...rest }) => rest));
+});
+
+// A rendered link or #n reference in the queue repo adds a "mentioned this" event to the target PR.
+test('ready comment never links target PRs', () => {
+  const c = renderComment(readyVerdict, { runUrl: 'https://run', targetPrs });
+  const outsideCode = c.replace(/<!--[\s\S]*?-->/g, '').replace(/`[^`]*`/g, '');
+  assert.doesNotMatch(outsideCode, /github\.com\/o\/|#\d/);
 });
 
 test('blocked comment with targets reports consumer pushes and unpushed targets', () => {
