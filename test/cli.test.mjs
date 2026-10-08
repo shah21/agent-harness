@@ -101,6 +101,6 @@ test('render-comment accepts --target-prs', () => {
   const v = file('rv.json', { outcome: 'READY_FOR_QA', warnings: [], checks: {} });
   const tprs = file('tprs.json', [{ ...markerPrs[0], url: 'https://github.com/o/super/pull/10' }]);
   const c = cli('render-comment', '--verdict', v, '--run-url', 'https://run', '--target-prs', tprs);
-  assert.match(c, /READY_FOR_QA\*\* — https:\/\/github\.com\/o\/super\/pull\/10/);
+  assert.match(c, /READY_FOR_QA\*\* — `https:\/\/github\.com\/o\/super\/pull\/10`/);
   assert.match(c, /<!-- agent-targets /);
 });
