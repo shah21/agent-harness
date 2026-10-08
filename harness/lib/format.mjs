@@ -90,10 +90,12 @@ export function renderTargetPr({ titleTemplate, bodyTemplate, issue, task, taskT
 
 export function renderComment(v, { runUrl, prUrl, targetPrs } = {}) {
   if (v.outcome === 'READY_FOR_QA') {
-    const main = prUrl ?? targetPrs?.find((p) => p.role === 'super')?.url ?? 'PR opened';
+    // Target PRs stay in code spans: a link from the queue repo adds a "mentioned this" event to them.
+    const superUrl = targetPrs?.find((p) => p.role === 'super')?.url;
+    const main = prUrl ?? (superUrl ? `\`${superUrl}\`` : 'PR opened');
     const head = `✅ **READY_FOR_QA** — ${main}\n\n${runLink(v, runUrl)}`;
     if (!targetPrs?.length) return head;
-    const list = targetPrs.map((p) => `- \`${p.repo}\` #${p.number} (draft): ${p.url}`).join('\n');
+    const list = targetPrs.map((p) => `- \`${p.repo}#${p.number}\` (draft): \`${p.url}\``).join('\n');
     const marker = targetsMarker(targetPrs.map(({ repo, number, branch, base, role }) => ({ repo, number, branch, base, role })));
     return `${head}\n\n${list}\n\n${marker}`;
   }
