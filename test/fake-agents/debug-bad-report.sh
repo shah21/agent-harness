@@ -1,0 +1,1 @@
+echo "STATUS: FINDINGS" > "$REPORT_PATH"
