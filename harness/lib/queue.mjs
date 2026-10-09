@@ -1,5 +1,6 @@
 import { parseTaskRef } from './issue.mjs';
 import { latestTargets } from './target.mjs';
+import { parseDebugIssue } from './debug.mjs';
 
 const MARKER_RE = /<!-- agent-task plan=(\S+) task=(\d+) issue=(\d+) -->/;
 
@@ -70,4 +71,18 @@ export function selectNext({ issues, prs, defaultBranch, ready = [] }) {
 
   const targets = targetParent({ ready, plan, task });
   return { issue, plan, task, base: parent ? parent.head : defaultBranch, skip: null, ...(targets ? { targets } : {}) };
+}
+
+export function selectDebug({ issues }) {
+  const next = issues
+    .map((i) => ({ ...i, labels: labelNames(i.labels) }))
+    .filter((i) => i.labels.includes('debug') && !i.labels.includes('agent:running'))
+    .sort((a, b) => a.number - b.number)[0];
+  if (!next) return { issue: null };
+  const parsed = parseDebugIssue(next.body);
+  return {
+    issue: { number: next.number, title: next.title, body: next.body, labels: next.labels },
+    ref: parsed.error ? null : parsed.ref,
+    skip: parsed.error ? `bad issue: ${parsed.error}` : null,
+  };
 }
