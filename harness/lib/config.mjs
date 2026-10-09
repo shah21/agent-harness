@@ -79,6 +79,27 @@ function targetConfig(value) {
   return { repo, path, branch, pr: { title, body }, author: author && { name: author.name, email: author.email } };
 }
 
+function contextGlobs(value) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.some((x) => typeof x !== 'string')) {
+    throw new Error('"debug.contextPaths" must be an array of strings');
+  }
+  for (const g of value) {
+    if (!g || g.startsWith('/') || g.split('/').includes('..')) {
+      throw new Error(`debug context path "${g}" must be a relative path inside the repository`);
+    }
+  }
+  return value;
+}
+
+function debugConfig(value) {
+  if (value === undefined) value = {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('"debug" must be an object');
+  const maxTurns = value.maxTurns ?? 60;
+  if (!Number.isInteger(maxTurns) || maxTurns < 1) throw new Error('"debug.maxTurns" must be a positive integer');
+  return { contextPaths: contextGlobs(value.contextPaths), timeout: parseDuration(value.timeout ?? '30m'), maxTurns };
+}
+
 export function loadConfig(text) {
   let raw;
   try {
@@ -126,6 +147,7 @@ export function loadConfig(text) {
     testGlobs: raw.testGlobs === undefined ? DEFAULTS.testGlobs : stringArray(raw.testGlobs, 'testGlobs'),
     env: envMap(raw.env),
     artifacts: artifactGlobs(raw.artifacts),
+    debug: debugConfig(raw.debug),
     target: targetConfig(raw.target),
   };
 }
