@@ -76,6 +76,33 @@ Each changed repository gets a **draft** PR with the same branch name; submodule
 
 The run job holds `TARGET_READ_TOKEN` during one clone step (masked, never written to disk, never in the agent's environment); prefer a read-only token there.
 
+## Debug runs
+
+A `debug` label queues a **read-only investigation** instead of an implementation. The agent follows a systematic-debugging method (adapted from the superpowers skill of the same name), cannot change the checkout, and answers with one comment on the issue: restated problem, reproduction status, evidence, ranked hypotheses tagged `CONFIRMED`, `INFERENCE` or `UNKNOWN`, root cause or honest unknowns, and what human input would settle it. Nothing is committed, pushed or opened as a PR.
+
+Open an issue (template `templates/debug-task.md`) whose body is free text plus two optional lines, then add the `debug` label:
+
+- `ref:` — `<branch|tag|sha>`, with a `target` configured, the commit of the target repository to investigate (submodules at the commits it records). Default: the target's default branch.
+- `context:` — `<path>`, a file on the default branch (a handoff, notes) put in front of the agent. Read it from a committed file rather than pasting long text.
+
+Add the job from `templates/agent.yml` (`debug`, which calls `run-debug.yml`) to the caller workflow; `bootstrap.mjs` creates the `debug` and `agent:debug-done` labels. A target needs the `TARGET_READ_TOKEN` secret only. Optional config:
+
+```json
+{
+  "debug": {
+    "contextPaths": ["target/docs/architecture/**", "docs/notes.md"],
+    "timeout": "30m",
+    "maxTurns": 60
+  }
+}
+```
+
+`contextPaths` are globs, relative to the repository that queues the run, that the agent reads first (use `target/...` to reach into the target clone). The harness knows no folder names; this is the consumer's convention.
+
+Outcomes: `FINDINGS` (verified root cause), `INCONCLUSIVE` (not established, or the agent ran out of time with a partial report), `BLOCKED` (could not investigate; `agent:blocked`, retry by removing it and re-adding `debug`), `WAITING` (usage limit; stays queued). `FINDINGS` and `INCONCLUSIVE` swap `debug` for `agent:debug-done`; the issue is not closed.
+
+Read-only is enforced, not just prompted: after the run, any change to `HEAD`, the branch, or the working tree of the repository or of a target clone (submodules included) is reverted and noted in the comment as `agent modified the checkout; changes were discarded`. The agent's environment holds no GitHub token. As for artifacts, the run artifact (logs, prompt, report) follows the same visibility as the repository.
+
 ## Usage limits and a second account
 
 Before any work, each run tries every configured account with one cheap turn. If an account runs out of usage mid-task, the attempt is discarded and the task restarts on the next account. Set the optional secret `CLAUDE_CODE_OAUTH_TOKEN_2` to add a second account. When every account is out, the issue is labelled `agent:waiting`, the queue pauses, and the scheduled trigger in `agent.yml` resumes it.
