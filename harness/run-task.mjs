@@ -13,7 +13,8 @@ import { runWithTimeout } from './lib/run-cmd.mjs';
 import { tailLog } from './lib/tail.mjs';
 import { parsePlanTask, comparePlan, conformanceWarnings } from './lib/conformance.mjs';
 import { collectArtifacts } from './lib/artifacts.mjs';
-import { agentCommand, agentEnv, renderPrompt, claudeTokens, probeCommand, detectUsageLimit, detectAuthFailure, servicesRule } from './lib/agent.mjs';
+import { probeAccounts } from './lib/probe.mjs';
+import { agentCommand, agentEnv, renderPrompt, claudeTokens, detectUsageLimit, detectAuthFailure, servicesRule } from './lib/agent.mjs';
 import {
   prepareTarget, startTargetBranches, resetTargets, targetsOffBranch, stashTargets,
   measureTargets, pointerErrors, bundleTargets,
@@ -28,22 +29,6 @@ const blocked = (kind, reason) => ({ outcome: 'BLOCKED', kind, reasons: [reason]
 const waiting = (accounts) => ({
   outcome: 'WAITING', kind: 'usage-limit', reasons: [`usage limit reached on all ${accounts} Claude accounts`], warnings: [],
 });
-
-// Try each configured account with one cheap turn; returns the ones that work.
-async function probeAccounts({ tokens, model, env, projectDir, logsDir }) {
-  const usable = [];
-  let limited = 0;
-  for (const [i, token] of tokens.entries()) {
-    const logFile = join(logsDir, `probe-${i + 1}.log`);
-    const r = await runWithTimeout(probeCommand({ model, override: env.AGENT_PROBE_CMD }), {
-      cwd: projectDir, timeoutSec: 120, logFile, env: agentEnv(env, { CLAUDE_CODE_OAUTH_TOKEN: token }),
-    });
-    const text = readFileSync(logFile, 'utf8');
-    if (detectUsageLimit(text)) limited++;
-    else if (r.exitCode === 0 && !r.timedOut && !detectAuthFailure(text)) usable.push({ token, account: i + 1 });
-  }
-  return { usable, limited };
-}
 
 export function parseDiff(text) {
   return text
