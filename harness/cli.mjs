@@ -3,8 +3,9 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
-import { selectNext, targetsToCheck } from './lib/queue.mjs';
+import { selectNext, selectDebug, targetsToCheck } from './lib/queue.mjs';
 import { renderPrBody, renderComment } from './lib/format.mjs';
+import { renderDebugComment } from './lib/debug-comment.mjs';
 import { issueToClose } from './lib/merged.mjs';
 import { loadConfig } from './lib/config.mjs';
 
@@ -16,7 +17,12 @@ const USAGE = `usage:
   cli.mjs target-info --config <f> --selection <f> --out <dir>
   cli.mjs targets-to-check --ready <f>
   cli.mjs render-comment --verdict <f> --run-url <u> [--pr-url <u>] [--target-prs <f>]
-  cli.mjs merged-issue --event <f>`;
+  cli.mjs merged-issue --event <f>
+  cli.mjs select-debug --issues <f>
+  cli.mjs debug-info --config <f> --selection <f> --out <dir>
+  cli.mjs debug-skip-verdict --selection <f>
+  cli.mjs debug-fallback-verdict --selection <f>
+  cli.mjs render-debug-comment --verdict <f> --run-url <u>`;
 
 const read = (f) => JSON.parse(readFileSync(f, 'utf8'));
 const print = (obj) => process.stdout.write(`${JSON.stringify(obj, null, 2)}\n`);
@@ -28,6 +34,14 @@ function blockedVerdict(selection, kind, reason) {
     plan: selection.plan, task: selection.task, taskTitle: null,
     baseBranch: selection.base, branch: `agent/issue-${selection.issue.number}`,
     model: null, commits: 0, checks: {}, report: null, reportText: null,
+  };
+}
+
+function blockedDebugVerdict(selection, kind, reason) {
+  return {
+    mode: 'debug', outcome: 'BLOCKED', kind, reasons: [reason], warnings: [],
+    issue: selection.issue.number, issueTitle: selection.issue.title, ref: selection.ref ?? null,
+    model: null, account: null, investigated: [], report: null, reportText: null,
   };
 }
 
@@ -95,6 +109,35 @@ switch (command) {
   }
   case 'targets-to-check':
     print(targetsToCheck(read(values.ready)));
+    break;
+  case 'select-debug':
+    print(selectDebug({ issues: read(values.issues) }));
+    break;
+  case 'debug-info': {
+    let target = null;
+    try {
+      target = loadConfig(readFileSync(values.config, 'utf8')).target;
+    } catch {
+      // debug-run reports an invalid config itself
+    }
+    if (!target) break;
+    if (process.env.HAS_TARGET_READ_TOKEN !== 'true') {
+      writeFileSync(join(values.out, 'target-checkout.txt'), 'target configured but TARGET_READ_TOKEN secret missing\n');
+      break;
+    }
+    process.stdout.write(`repo=${target.repo}\npath=${target.path}\nref=${read(values.selection).ref ?? ''}\n`);
+    break;
+  }
+  case 'debug-skip-verdict': {
+    const selection = read(values.selection);
+    print(blockedDebugVerdict(selection, 'gate', selection.skip));
+    break;
+  }
+  case 'debug-fallback-verdict':
+    print(blockedDebugVerdict(read(values.selection), 'harness', 'the run ended without a verdict (crash or job timeout); see the run log'));
+    break;
+  case 'render-debug-comment':
+    process.stdout.write(renderDebugComment(read(values.verdict), { runUrl: values['run-url'] }));
     break;
   default:
     console.error(USAGE);
