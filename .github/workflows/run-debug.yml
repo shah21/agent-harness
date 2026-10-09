@@ -1,0 +1,270 @@
+name: agent-run-debug
+
+# Read-only investigation of an issue labelled `debug`. Same three-VM split as
+# run-task.yml so the agent never shares a machine with a write-capable token:
+#   select  — picks and claims the oldest debug issue (issues: write)
+#   run     — clones the project (and target) and runs the agent (contents: read, Claude token only)
+#   publish — posts the findings comment and swaps labels (issues: write)
+# The caller workflow must run this after its `agent` job (needs + always()) and set a
+# workflow-level concurrency group, so one whole chain finishes before the next starts.
+
+on:
+  workflow_call:
+    inputs:
+      harness_repo:
+        type: string
+        required: true
+      harness_ref:
+        type: string
+        default: v1
+      caller_workflow:
+        type: string
+        default: agent.yml
+      node_version:
+        type: string
+        default: '22'
+      claude_code_version:
+        type: string
+        default: '2.1.283'
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: true
+      CLAUDE_CODE_OAUTH_TOKEN_2:
+        required: false
+      # Optional: investigate a separate target repository (agent.config.json "target").
+      TARGET_READ_TOKEN:
+        required: false
+
+jobs:
+  select:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    outputs:
+      issue: ${{ steps.select.outputs.issue }}
+      skipped: ${{ steps.select.outputs.skipped }}
+      default: ${{ steps.select.outputs.default }}
+    steps:
+      - name: Checkout harness
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.harness_repo }}
+          ref: ${{ inputs.harness_ref }}
+          path: .harness
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+
+      - name: Ensure labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for l in debug agent:running agent:blocked agent:debug-done; do
+            gh label create "$l" --repo "$GITHUB_REPOSITORY" --color 5319e7 >/dev/null 2>&1 || true
+          done
+
+      - name: Select next debug issue
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/agent"
+          cd "$RUNNER_TEMP/agent"
+          gh issue list --repo "$GITHUB_REPOSITORY" --state open --label debug --limit 200 --json number,title,body,labels > issues.json
+          default=$(gh repo view "$GITHUB_REPOSITORY" --json defaultBranchRef -q .defaultBranchRef.name)
+          node "$GITHUB_WORKSPACE/.harness/harness/cli.mjs" select-debug --issues issues.json > selection.json
+          cat selection.json
+          jq '.issue' selection.json > issue.json
+          {
+            echo "issue=$(jq -r '.issue.number // empty' selection.json)"
+            echo "skipped=$(jq -r 'if .skip then "true" else "false" end' selection.json)"
+            echo "default=$default"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Claim issue
+        if: steps.select.outputs.issue != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ steps.select.outputs.issue }}
+        run: gh issue edit "$ISSUE" --repo "$GITHUB_REPOSITORY" --add-label agent:running
+
+      - name: Upload selection
+        if: steps.select.outputs.issue != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-debug-selection
+          path: |
+            ${{ runner.temp }}/agent/selection.json
+            ${{ runner.temp }}/agent/issue.json
+          retention-days: 14
+
+  run:
+    needs: select
+    if: needs.select.outputs.issue != '' && needs.select.outputs.skipped == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout harness
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.harness_repo }}
+          ref: ${{ inputs.harness_ref }}
+          path: .harness
+          persist-credentials: false
+
+      - name: Download selection
+        uses: actions/download-artifact@v4
+        with:
+          name: agent-debug-selection
+          path: ${{ runner.temp }}/agent
+
+      # Debug runs always read the default branch: config and context come from there.
+      - name: Checkout project
+        uses: actions/checkout@v4
+        with:
+          path: project
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+
+      - name: Install tooling
+        env:
+          CLAUDE_CODE_VERSION: ${{ inputs.claude_code_version }}
+        run: |
+          corepack enable
+          npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+
+      - name: Copy config
+        run: cp project/agent.config.json "$RUNNER_TEMP/agent/default.agent.config.json"
+
+      - name: Target info
+        id: target
+        env:
+          HAS_TARGET_READ_TOKEN: ${{ secrets.TARGET_READ_TOKEN != '' }}
+        run: >-
+          node .harness/harness/cli.mjs debug-info
+          --config "$RUNNER_TEMP/agent/default.agent.config.json"
+          --selection "$RUNNER_TEMP/agent/selection.json"
+          --out "$RUNNER_TEMP/agent" >> "$GITHUB_OUTPUT"
+
+      # Full history and every tag, so the issue's `ref:` can be a branch, tag or commit.
+      # The read token lives in this step only: not on disk, not in the agent's environment.
+      - name: Checkout target
+        id: checkout_target
+        if: steps.target.outputs.repo != ''
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.target.outputs.repo }}
+          ref: ${{ steps.target.outputs.ref }}
+          token: ${{ secrets.TARGET_READ_TOKEN }}
+          submodules: recursive
+          fetch-depth: 0
+          path: project/${{ steps.target.outputs.path }}
+          persist-credentials: false
+
+      - name: Record target checkout failure
+        if: steps.checkout_target.outcome == 'failure'
+        run: echo "target checkout failed" > "$RUNNER_TEMP/agent/target-checkout.txt"
+
+      - name: Run debug
+        timeout-minutes: 75
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          CLAUDE_CODE_OAUTH_TOKEN_2: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_2 }}
+        run: >-
+          node .harness/harness/debug-run.mjs
+          --project project
+          --issue "$RUNNER_TEMP/agent/issue.json"
+          --out "$RUNNER_TEMP/agent"
+          --config "$RUNNER_TEMP/agent/default.agent.config.json"
+
+      - name: Upload run results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-debug-run-issue-${{ needs.select.outputs.issue }}
+          path: ${{ runner.temp }}/agent
+          if-no-files-found: warn
+          retention-days: 14
+
+  publish:
+    needs: [select, run]
+    if: always() && needs.select.outputs.issue != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+      actions: write
+    steps:
+      - name: Checkout harness
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.harness_repo }}
+          ref: ${{ inputs.harness_ref }}
+          path: .harness
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+
+      - name: Download selection
+        uses: actions/download-artifact@v4
+        with:
+          name: agent-debug-selection
+          path: ${{ runner.temp }}/selection
+
+      - name: Download run results
+        if: needs.run.result != 'skipped'
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: agent-debug-run-issue-${{ needs.select.outputs.issue }}
+          path: ${{ runner.temp }}/agent
+
+      - name: Publish result
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SKIPPED: ${{ needs.select.outputs.skipped }}
+          RUN_RESULT: ${{ needs.run.result }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/agent"
+          sel="$RUNNER_TEMP/selection/selection.json"
+          export VERDICT="$RUNNER_TEMP/publish-verdict.json"
+          if [ "$SKIPPED" = "true" ]; then
+            node .harness/harness/cli.mjs debug-skip-verdict --selection "$sel" > "$VERDICT"
+          elif [ "$RUN_RESULT" = "success" ] && [ -f "$RUNNER_TEMP/agent/verdict.json" ]; then
+            cp "$RUNNER_TEMP/agent/verdict.json" "$VERDICT"
+          else
+            node .harness/harness/cli.mjs debug-fallback-verdict --selection "$sel" > "$VERDICT"
+          fi
+          bash .harness/harness/publish-debug.sh
+
+      - name: Continue queue
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CALLER: ${{ inputs.caller_workflow }}
+          DEFAULT_BRANCH: ${{ needs.select.outputs.default }}
+        run: |
+          # Every account is out of usage: stay paused until the scheduled run.
+          if [ "$(jq -r .outcome "$RUNNER_TEMP/publish-verdict.json" 2>/dev/null)" = "WAITING" ]; then
+            echo "paused: usage limit on all accounts"
+            exit 0
+          fi
+          remaining=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label debug --json number -q 'length')
+          if [ "$remaining" -gt 0 ]; then
+            gh workflow run "$CALLER" --repo "$GITHUB_REPOSITORY" --ref "$DEFAULT_BRANCH"
+          fi
