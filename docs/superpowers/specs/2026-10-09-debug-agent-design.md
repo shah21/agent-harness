@@ -14,7 +14,7 @@ Later modes (brainstorming, fix proposals) are out of scope here; the runner is 
 
 - Label **`debug`** (distinct from `agent`; the two never mix). Added to the consumer's labels by bootstrap.
 - Issue body: free text describing the symptom, optionally one line `context: <path>` — a repo-relative file on the **default branch** (same rule as `plan:`). The harness reads it from the default branch, never from a stacked or agent branch. A missing or escaping path (`..`, absolute) ends `BLOCKED (gate)`.
-- Optional line `ref: <branch|tag|sha>` — with `target` configured, the commit to investigate. The harness checks it out in the target clone (detached; submodules updated to the pointers it records). Default: the target's default branch. The harness fetches `ref` explicitly (branch, tag or SHA) and the tags needed for `log`/`blame` across versions, so a shallow or default-branch-only clone is not a limit. A ref that cannot be fetched ends `BLOCKED (gate)` with git's error. The report states the investigated SHA.
+- Optional line `ref: <branch|tag|sha>` — with `target` configured, the commit to investigate. The harness checks it out in the target clone (detached; submodules updated to the pointers it records). Default: the target's default branch. The workflow's target checkout step (full history, all tags, submodules recursive) receives `ref`, so a shallow or default-branch-only clone is not a limit. A ref that cannot be checked out ends `BLOCKED (harness)` `target checkout failed`, as for any target. `ref` must match `^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$` without `..`; anything else ends `BLOCKED (gate)`. The report states the investigated SHA.
 - Debug runs share the existing concurrency group: one select → run → publish chain per repository, in label order.
 - Retrying: remove `agent:blocked` and re-add `debug`.
 
@@ -64,7 +64,7 @@ Prompting is not enough. After the agent exits (or times out):
 
 ## 6. Vendored skill
 
-`harness/debug/systematic-debugging/` is a copy of the superpowers `systematic-debugging` skill (SKILL.md plus `root-cause-tracing.md`, `defense-in-depth.md`, `condition-based-waiting.md`), MIT, with `harness/debug/LICENSE-superpowers` and `NOTICE`. It was copied unmodified so the adaptation diff is visible. The adaptation, done as a task:
+`harness/debug/systematic-debugging/SKILL.md` is adapted from the superpowers `systematic-debugging` skill, MIT, with `harness/debug/LICENSE-superpowers` and `NOTICE`. The unmodified upstream files are in git history (first commit of the directory); the adaptation is the next commit. Only `SKILL.md` is kept: the three reference docs are fix-oriented (defense-in-depth, condition polling) or instrumentation-oriented and add nothing to a read-only run. The adaptation:
 
 - Remove everything that proposes, writes or tests a **fix** (Phases 3–4 become "state the verified root cause and the smallest fix as text"), the "ask your human partner" escalation, and the "3 failed fixes → question architecture" step. Nothing in it may prompt the agent to edit the project.
 - Keep: the Iron Law reframed as "no conclusion without evidence", Phase 1 (read errors, reproduce, check recent changes, trace data flow), Phase 2 (patterns), and hypothesis-and-falsify from Phase 3 using read-only experiments.
@@ -78,8 +78,6 @@ The agent writes the report to the report path, fields at line start:
 
 ```
 STATUS: FINDINGS | INCONCLUSIVE | BLOCKED
-ISSUE: #<n>
-INVESTIGATED_SHA: <sha of the investigated checkout, per repository when a target is used>
 PROBLEM:
 <restated symptom, expected vs observed>
 REPRODUCTION:
@@ -103,21 +101,23 @@ HUMAN_INPUT_NEEDED:
 - `FINDINGS` requires `ROOT_CAUSE` ≠ `None` and at least one `CONFIRMED` hypothesis; otherwise the harness downgrades it to `INCONCLUSIVE` with a warning (a root cause without confirmed evidence is not a finding).
 - A missing report, missing field or unknown `STATUS` → `BLOCKED (agent)` with the parse error.
 - Timeout or agent failure with a report present → published as `INCONCLUSIVE` plus a warning; without a report → `BLOCKED (agent)`.
+- The harness records the investigated commit of the consumer and of each target repository itself (`investigated` in the verdict) and the comment lists them; the agent does not report it.
 - Publishing: one comment on the issue, carrying a `<!-- agent-debug -->` marker, the report rendered as sections, then any warnings. Over 60,000 characters the evidence is truncated and the full text stays in the run artifact. Labels: `agent:debug-done` on FINDINGS/INCONCLUSIVE, `agent:blocked` on BLOCKED; the `debug` label is removed so a re-add re-queues. The issue is **not** closed.
 - The run artifact (logs, `prompt.md`, `report.md`) is kept as today. Consumers whose repositories are public should know artifacts are downloadable by any signed-in user (existing note in the README).
 
 ## 8. Workflow changes (manual — `.github/**` is protected)
 
 - `templates/agent.yml`: the job `if` also accepts `github.event.label.name == 'debug'`, and passes `mode: debug` when it is.
-- `run-task.yml` (reusable): `mode` input (default `implement`); in `debug` mode select picks the oldest `debug` issue, run calls `debug-run.mjs`, publish posts the §7 comment and skips the PR/branch steps.
+- New reusable workflow `.github/workflows/run-debug.yml` (select → run → publish, same three-VM split as `run-task.yml`, which is not touched). Select picks the oldest `debug` issue; run calls `debug-run.mjs`; publish calls `publish-debug.sh`. Only `TARGET_READ_TOKEN` is used (no push token).
+- `templates/agent.yml` gains a second job `debug` that calls `run-debug.yml`, runs after the `agent` job (`needs: agent` with `always()`), so the two never run in parallel.
 - `templates/agent-task.md` is joined by `templates/debug-task.md` (symptom + `context:` line).
 - `bootstrap.mjs` creates the `debug` and `agent:debug-done` labels.
 
 ## 9. Structure and reuse
 
-- New: `harness/debug-run.mjs`, `harness/debug-prompt.md`, `harness/lib/debug.mjs` (issue parse, report parse/validate, comment render, read-only guard), `harness/debug/` (§6).
+- New: `harness/debug-run.mjs`, `harness/debug-prompt.md`, `harness/lib/debug.mjs` (issue parse, report parse/validate, comment render, read-only guard), `harness/debug/` (§6), `harness/lib/probe.mjs` (the account probe, extracted from `run-task.mjs`), `harness/lib/debug-guard.mjs`, `harness/lib/debug-comment.mjs`, `harness/publish-debug.sh`.
 - Reused unchanged: `lib/config.mjs` (extended with `debug`), `lib/agent.mjs`, `lib/run-cmd.mjs`, `lib/target-run.mjs`, the probe and usage-limit handling.
-- `run-task.mjs` is not modified. Another mode later (brainstorm) is a new prompt plus a report validator over the same runner.
+- `run-task.mjs` changes in one way only: `probeAccounts` moves to `lib/probe.mjs` and is imported back, behaviour unchanged. Another mode later (brainstorm) is a new prompt plus a report validator over the same runner.
 
 ## 10. Tests
 
