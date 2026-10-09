@@ -71,3 +71,22 @@ test('the caller template mentions the target secrets only as comments', () => {
   assert.match(y, /# TARGET_READ_TOKEN: \$\{\{ secrets\.TARGET_READ_TOKEN \}\}/);
   assert.match(y, /# TARGET_PUSH_TOKEN: \$\{\{ secrets\.TARGET_PUSH_TOKEN \}\}/);
 });
+
+test('the debug workflow gives the run job no write token and publishes without touching branches', () => {
+  const y = read('.github/workflows/run-debug.yml');
+  assert.match(y, /workflow_call:/);
+  const run = y.slice(y.indexOf('\n  run:'), y.indexOf('\n  publish:'));
+  assert.match(run, /contents: read/);
+  assert.doesNotMatch(run, /issues: write|contents: write|pull-requests: write|TARGET_PUSH_TOKEN/);
+  assert.match(run, /fetch-depth: 0/);
+  assert.match(y, /debug-run\.mjs/);
+  assert.match(y, /publish-debug\.sh/);
+  assert.doesNotMatch(y, /pull-requests: write|contents: write/);
+});
+
+test('the caller template runs the debug job after the agent job', () => {
+  const y = read('templates/agent.yml');
+  assert.match(y, /\n  debug:\n    needs: agent\n/);
+  assert.match(y, /github\.event\.label\.name == 'debug'/);
+  assert.match(y, /run-debug\.yml@v1/);
+});
