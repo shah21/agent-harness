@@ -88,5 +88,6 @@ test('the caller template runs the debug job after the agent job', () => {
   const y = read('templates/agent.yml');
   assert.match(y, /\n  debug:\n    needs: agent\n/);
   assert.match(y, /github\.event\.label\.name == 'debug'/);
+  assert.match(y, /github\.event\.sender\.login == github\.repository_owner/);
   assert.match(y, /run-debug\.yml@v1/);
 });

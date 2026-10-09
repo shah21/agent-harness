@@ -39,9 +39,11 @@ jobs:
 
   # Read-only investigations of issues labelled `debug`. Runs after the `agent` job so the
   # two never run in parallel; `always()` lets it run when the `agent` job was skipped.
+  # Only the repository owner's own label starts a run. For an organisation-owned repository
+  # `repository_owner` is the organisation, never a user: replace the `sender` check with your own.
   debug:
     needs: agent
-    if: ${{ always() && (github.event_name != 'issues' || github.event.label.name == 'debug') }}
+    if: ${{ always() && (github.event_name != 'issues' || (github.event.label.name == 'debug' && github.event.sender.login == github.repository_owner)) }}
     uses: OWNER/agent-harness/.github/workflows/run-debug.yml@v1
     with:
       harness_repo: OWNER/agent-harness
