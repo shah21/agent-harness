@@ -93,4 +93,20 @@ args=(--verdict "$VERDICT" --run-url "$RUN_URL")
 [ -s "$TMP/target-prs.json" ] && args+=(--target-prs "$TMP/target-prs.json")
 node "$CLI" render-comment "${args[@]}" > "$TMP/comment.md"
 gh issue comment "$issue" --repo "$REPO" --body-file "$TMP/comment.md" >/dev/null
+
+# Review rounds: one comment each, then a summary. A failed post is logged and skipped;
+# the verdict artifact keeps every round.
+if [ "$outcome" = "READY_FOR_QA" ] && [ "$(jq -r '.review != null' "$VERDICT")" = "true" ]; then
+  stage="review-comments"
+  node "$CLI" render-review-comments --verdict "$VERDICT" --out "$TMP/review" || echo "rendering review comments failed" >&2
+  for f in "$TMP"/review/round-*.md "$TMP"/review/summary.md; do
+    [ -f "$f" ] || continue
+    gh issue comment "$issue" --repo "$REPO" --body-file "$f" >/dev/null || echo "posting $(basename "$f") failed" >&2
+  done
+  gh issue edit "$issue" --repo "$REPO" --remove-label agent:review-open >/dev/null 2>&1 || true
+  if [ "$(jq -r '(.review.open // []) | length' "$VERDICT")" -gt 0 ]; then
+    gh issue edit "$issue" --repo "$REPO" --add-label agent:review-open >/dev/null || echo "adding agent:review-open failed" >&2
+  fi
+fi
+
 echo "published ${outcome} for #${issue} ${pr}"

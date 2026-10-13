@@ -8,7 +8,7 @@ import { tailLog } from './tail.mjs';
 
 // Connecting a repo to the harness: the mechanical steps, plus checks for the mistakes
 // that have actually blocked first tasks.
-export const LABELS = ['agent', 'agent:opus', 'agent:running', 'agent:ready', 'agent:blocked', 'agent:waiting', 'debug', 'agent:debug-done'];
+export const LABELS = ['agent', 'agent:opus', 'agent:running', 'agent:ready', 'agent:blocked', 'agent:waiting', 'debug', 'agent:debug-done', 'agent:review-open'];
 const SECRET = 'CLAUDE_CODE_OAUTH_TOKEN';
 
 export function deriveConfig({ pkg, files }) {
