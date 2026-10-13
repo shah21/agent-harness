@@ -2,8 +2,10 @@
 # Fake gh for publish.sh tests: logs every call (and any --body-file contents) to $GH_LOG.
 echo "gh $*" >> "$GH_LOG"
 prev=""
+body=""
 for a in "$@"; do
   [ "$prev" = "--body-file" ] && cat "$a" >> "$GH_LOG"
+  [ "$prev" = "--body-file" ] && body="$a"
   prev="$a"
 done
 case "$1 $2" in
@@ -15,5 +17,9 @@ case "$1 $2" in
     [ -n "$GH_PR_LIST" ] && echo "$GH_PR_LIST" ;;
   "repo view")
     echo "main" ;;
+  "issue comment")
+    if [ -n "$GH_FAIL_COMMENT_CONTAINING" ] && [ -n "$body" ] && grep -q -- "$GH_FAIL_COMMENT_CONTAINING" "$body"; then
+      echo "comment failed" >&2; exit 1
+    fi ;;
 esac
 exit 0
