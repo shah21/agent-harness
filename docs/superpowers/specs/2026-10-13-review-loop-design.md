@@ -30,7 +30,7 @@ Optional block in `agent.config.json`; absent means no loop.
 
 - `rules`: globs relative to the consumer root, same semantics as `debug.contextPaths` (`target/...` reaches into the target clone). Read from the **default branch** (consumer) or the target's base commit, never from the agent's branch, so the implementer cannot rewrite the rules it is judged by. Default `[]`.
 - `model`: reviewer model. Default `sonnet`. The fixer uses the implementer's model (`agent:opus` applies to it too).
-- `maxRounds`: integer 1–3, default 2.
+- `maxRounds`: integer 1–3, default 2. Counts **reviews**. A fix runs only when another review will check it, so `1` means review only (findings reported, nothing fixed) and `2` means review → fix → review.
 - `timeout`: budget for the whole loop, default `40m`.
 - `maxTurns`: per reviewer and fixer session, default 60.
 
@@ -44,7 +44,7 @@ New files: `harness/lib/review.mjs` (pure logic: parsing, validation, fingerprin
 
 Round *n*:
 
-1. **Review.** Claude with tools `Read,Glob,Grep` (no Edit, Write or Bash), wrapped in `snapshot` / `enforceReadOnly` from `harness/lib/debug-guard.mjs`. Inputs: the plan task text; `git diff <base>..HEAD` of the consumer and every target repo; the `rules` files; the nearest `AGENTS.md` / `CLAUDE.md` above each changed path (walk up from the path, consumer and target trees, read at base); findings and fixer replies of earlier rounds. Never the implementer's transcript. Output: findings JSON (§5).
+1. **Review.** Claude with tools `Read,Glob,Grep,Write` (no Edit or Bash; Write only so it can write its result to the file named by `AGENT_OUTPUT_PATH` under the run's output directory, as the implementer writes its report), wrapped in `snapshot` / `enforceReadOnly` from `harness/lib/debug-guard.mjs`. Inputs: the plan task text; `git diff <base>..HEAD` of the consumer and every target repo; the `rules` files; the nearest `AGENTS.md` / `CLAUDE.md` above each changed path (walk up from the path, consumer and target trees, read at base); findings and fixer replies of earlier rounds. Never the implementer's transcript. Output: findings JSON (§5).
 2. **Exit check** (§6): clean, no progress, round cap, budget.
 3. **Fix.** A fresh Claude session, implementer's model and tools, given the high and medium findings, the plan task and the diff. It commits once per repo it changes, message `fix: address review round <n>`, no trailers. Output: one reply per finding id (§5).
 4. **Verify.** The existing `clean → reinstall → setup → runChecks` sequence, then the gate rules (protected paths, commit rules) on the new diff. Red checks or a gate violation: `git reset --hard` every repo (consumer and targets, submodule pointers included) to the last green SHA and exit.
@@ -56,7 +56,7 @@ Once the loop starts, the outcome is always `READY_FOR_QA`. High and medium find
 
 ### Budget
 
-The run job timeout rises from 90 to 150 minutes and the agent step from 75 to 135. Before each round the loop checks that a full round still fits in `review.timeout` and in the remaining step time; if not it exits `budget`. A usage limit during the loop exits `usage-limit` with the last green state kept; it does not turn the task into `WAITING`, because the implementation is complete.
+The run job timeout rises from 90 to 150 minutes and the agent step from 75 to 135. The loop knows only `review.timeout`: before each review after the first, and before each fix, it checks that the remaining budget exceeds the longest step so far; if not it exits `budget`. Each agent session's timeout is the remaining budget. A consumer whose implementation plus review budget would exceed the step timeout lowers `review.timeout`. A usage limit during the loop exits `usage-limit` with the last green state kept; it does not turn the task into `WAITING`, because the implementation is complete.
 
 ## 5. Contracts
 
@@ -114,7 +114,7 @@ A missing id is `UNADDRESSED`, treated like `WONTFIX` for the next round. A fixe
 - `commit`: per round, the consumer SHA, plus `targets: { "<repo>": "<sha>" }` when targets changed.
 - `checks`: the existing `{ ok, exitCode, timedOut, durationSec, tail }` shape.
 - A final clean round has no `fixes` / `commit`.
-- `open`: high/medium findings of the last review not confirmed fixed by a later review; `WONTFIX` and `UNADDRESSED` items stay in it with their result.
+- `open`: the high/medium findings of the last completed review. When a fix ran after that review (and no later review confirmed it), each finding carries that fix's `result`: `FIXED` (unconfirmed), `WONTFIX` with `reason`, `UNADDRESSED`, or `REVERTED` when the fix was discarded. Empty only on `clean`.
 - Top-level `verdict.checks` holds the **final green** state so existing readers keep reading correct results. `verdict.commits` and `verdict.diff` cover the final HEAD.
 
 The field is absent when no loop ran. This is the contract an external run-history collector stores.
