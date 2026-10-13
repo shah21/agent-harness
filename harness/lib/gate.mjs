@@ -7,6 +7,19 @@ function blocked(kind, reasons, extra = {}) {
   return { outcome: 'BLOCKED', kind, reasons, warnings: [], ...extra };
 }
 
+// Rules any change must keep, whoever made it: protected paths, submodule pointers, existing tests.
+export function diffViolations({ diff, config, pointerErrors = [] }) {
+  const touched = diff.flatMap((d) => (d.oldPath ? [d.oldPath, d.path] : [d.path]));
+  const protectedHits = [...new Set(touched.filter((p) => matchesAny(p, config.protectedPaths)))];
+  if (protectedHits.length) return [`changes touch protected paths: ${protectedHits.join(', ')}`];
+  if (pointerErrors.length) return pointerErrors;
+  const removedTests = diff
+    .filter((d) => (d.status === 'D' && matchesAny(d.path, config.testGlobs)) || (d.status === 'R' && matchesAny(d.oldPath, config.testGlobs)))
+    .map((d) => (d.status === 'R' ? d.oldPath : d.path));
+  if (removedTests.length) return [`existing tests deleted or renamed: ${removedTests.join(', ')}`];
+  return [];
+}
+
 // Rows are evaluated in spec order (§7); the first match wins.
 export function decide({ agent, reportText, commits, diff, checks, config, pointerErrors = [] }) {
   if (agent.timedOut) return blocked('agent', ['agent timed out before finishing']);
@@ -23,19 +36,8 @@ export function decide({ agent, reportText, commits, diff, checks, config, point
   if (report.status === 'BLOCKED') return blocked('report', [report.blocker], { report });
   if (commits === 0) return blocked('gate', ['report says READY_FOR_QA but the branch has no commits'], { report });
 
-  const touched = diff.flatMap((d) => (d.oldPath ? [d.oldPath, d.path] : [d.path]));
-  const protectedHits = [...new Set(touched.filter((p) => matchesAny(p, config.protectedPaths)))];
-  if (protectedHits.length) {
-    return blocked('gate', [`changes touch protected paths: ${protectedHits.join(', ')}`], { report });
-  }
-  if (pointerErrors.length) return blocked('gate', pointerErrors, { report });
-
-  const removedTests = diff
-    .filter((d) => (d.status === 'D' && matchesAny(d.path, config.testGlobs)) || (d.status === 'R' && matchesAny(d.oldPath, config.testGlobs)))
-    .map((d) => (d.status === 'R' ? d.oldPath : d.path));
-  if (removedTests.length) {
-    return blocked('gate', [`existing tests deleted or renamed: ${removedTests.join(', ')}`], { report });
-  }
+  const violations = diffViolations({ diff, config, pointerErrors });
+  if (violations.length) return blocked('gate', violations, { report });
 
   const failed = Object.entries(checks).filter(([, c]) => !c.ok).map(([name]) => name);
   if (failed.length) {
