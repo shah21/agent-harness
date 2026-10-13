@@ -353,6 +353,7 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
         ? renderTargetPr({
           titleTemplate: config.target.pr.title, bodyTemplate: target.prTemplate, issue: issue.number, task: ref.task,
           taskTitle: meta.taskTitle, report: decision.report, checks, changedFiles: repo.diff.map((d) => d.path),
+          review,
         })
         : { prTitle: null, prBody: null };
       return { ...entry, ...pr };
