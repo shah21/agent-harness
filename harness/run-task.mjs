@@ -8,7 +8,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { loadConfig } from './lib/config.mjs';
 import { parseTaskRef, findTaskHeading } from './lib/issue.mjs';
-import { decide } from './lib/gate.mjs';
+import { decide, diffViolations } from './lib/gate.mjs';
+import { runReviewLoop } from './lib/review-loop.mjs';
+import { reviewRepos } from './lib/review-inputs.mjs';
 import { runWithTimeout } from './lib/run-cmd.mjs';
 import { tailLog } from './lib/tail.mjs';
 import { parsePlanTask, comparePlan, conformanceWarnings } from './lib/conformance.mjs';
@@ -279,29 +281,40 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
     warnings.push('agent left uncommitted changes in the target repositories; they were stashed and are not part of this result');
   }
 
-  const consumerCommits = Number(git(projectDir, 'rev-list', '--count', `${baseSha}..HEAD`));
-  const consumerDiff = parseDiff(git(projectDir, 'diff', '--name-status', '-M', baseSha, 'HEAD'));
-  if (target) measureTargets(target, parseDiff);
-  const commits = consumerCommits + (target ? target.repos.reduce((n, r) => n + r.commits, 0) : 0);
-  const diff = target ? [...consumerDiff, ...target.repos.flatMap((r) => r.prefixedDiff)] : consumerDiff;
+  const measure = () => {
+    const consumerCommits = Number(git(projectDir, 'rev-list', '--count', `${baseSha}..HEAD`));
+    const consumerDiff = parseDiff(git(projectDir, 'diff', '--name-status', '-M', baseSha, 'HEAD'));
+    if (target) measureTargets(target, parseDiff);
+    return {
+      consumerCommits,
+      commits: consumerCommits + (target ? target.repos.reduce((n, r) => n + r.commits, 0) : 0),
+      diff: target ? [...consumerDiff, ...target.repos.flatMap((r) => r.prefixedDiff)] : consumerDiff,
+    };
+  };
+  let { consumerCommits, commits, diff } = measure();
   const agentFailed = agent.timedOut || agent.exitCode !== 0;
-  let checks = {};
-  if (!agentFailed) {
-    // Verify what a clean checkout of the commits would see: drop ignored
-    // files the agent may have left (build output, installed packages) and
-    // install again from the committed manifests.
-    // -ff also removes nested repositories, which a single -f skips.
-    // The target clone is git-ignored in the consumer, so it is excluded here and cleaned on its own.
-    // With -ff a pathspec exclude alone does not protect a nested repository; un-ignoring it with -e does.
+
+  // Verify what a clean checkout of the commits would see: drop ignored
+  // files the agent may have left (build output, installed packages) and
+  // install again from the committed manifests.
+  // -ff also removes nested repositories, which a single -f skips.
+  // The target clone is git-ignored in the consumer, so it is excluded here and cleaned on its own.
+  // With -ff a pathspec exclude alone does not protect a nested repository; un-ignoring it with -e does.
+  const verifyCheckout = async (phase) => {
     git(projectDir, 'clean', '-ffdXq', ...(target ? ['-e', `!${config.target.path}/`, '--', '.', `:(exclude)${config.target.path}`] : []));
     if (target) for (const r of target.repos) git(r.dir, 'clean', '-ffdXq');
-    const reinstall = await install('install-verify.log');
-    if (installFailed(reinstall)) {
-      return finish({ ...blocked('harness', `install before verification failed (exit ${reinstall.exitCode})`), commits, diff, baseSha });
-    }
-    const verifySetupError = await setup('setup-verify.log', 'setup before verification');
-    if (verifySetupError) return finish({ ...blocked('harness', verifySetupError), commits, diff, baseSha });
-    checks = await runChecks(config, projectDir, logsDir, 'verify', quietEnv);
+    const reinstall = await install(`install-${phase}.log`);
+    if (installFailed(reinstall)) return { error: `install before verification failed (exit ${reinstall.exitCode})` };
+    const setupError = await setup(`setup-${phase}.log`, 'setup before verification');
+    if (setupError) return { error: setupError };
+    return { checks: await runChecks(config, projectDir, logsDir, phase, quietEnv) };
+  };
+
+  let checks = {};
+  if (!agentFailed) {
+    const verified = await verifyCheckout('verify');
+    if (verified.error) return finish({ ...blocked('harness', verified.error), commits, diff, baseSha });
+    checks = verified.checks;
     meta.artifacts = collect();
   }
   const reportText = existsSync(reportPath) ? readFileSync(reportPath, 'utf8') : null;
@@ -310,6 +323,19 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
     ? { ...config, protectedPaths: [...config.protectedPaths, ...target.repos.map((r) => `${r.path}/.github/**`)] }
     : config;
   const decision = decide({ agent, reportText, commits, diff, checks, config: gateConfig, pointerErrors: target ? pointerErrors(target) : [] });
+  let review = null;
+  if (decision.outcome === 'READY_FOR_QA' && config.review) {
+    const loop = await runReviewLoop({
+      config, repos: reviewRepos({ projectDir, baseSha, branch: meta.branch, target }), planText, task: ref.task,
+      implementerModel: meta.model, accounts, env, projectDir, outDir, logsDir, verify: verifyCheckout,
+      gateReasons: () => diffViolations({ diff: measure().diff, config: gateConfig, pointerErrors: target ? pointerErrors(target) : [] }),
+      targetSection: target ? targetPromptSection({ path: config.target.path, repo: config.target.repo, branch: target.branch }) : '',
+    });
+    review = loop.review;
+    warnings.push(...loop.warnings);
+    if (loop.finalChecks) checks = loop.finalChecks;
+    ({ consumerCommits, commits, diff } = measure());
+  }
   const readAtHead = (path) => {
     try {
       return execFileSync('git', ['show', `HEAD:${path}`], { cwd: projectDir, encoding: 'utf8' });
@@ -344,6 +370,7 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
     checks,
     baseSha,
     ...targetFields,
+    ...(review ? { review } : {}),
   });
 }
 
