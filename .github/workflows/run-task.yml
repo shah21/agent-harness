@@ -129,7 +129,7 @@ jobs:
     needs: select
     if: needs.select.outputs.issue != '' && needs.select.outputs.skipped == 'false'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 150
     permissions:
       contents: read
     steps:
@@ -205,7 +205,7 @@ jobs:
       # The step timeout sits inside the job's so the bundle and upload steps
       # below still get to run when the agent overruns.
       - name: Run task
-        timeout-minutes: 75
+        timeout-minutes: 135
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           CLAUDE_CODE_OAUTH_TOKEN_2: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_2 }}
