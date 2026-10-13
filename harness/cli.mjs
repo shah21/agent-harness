@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // Small commands the reusable workflow calls between gh steps.
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { selectNext, selectDebug, targetsToCheck } from './lib/queue.mjs';
-import { renderPrBody, renderComment } from './lib/format.mjs';
+import { renderPrBody, renderComment, renderReviewRound, renderReviewSummary } from './lib/format.mjs';
 import { renderDebugComment } from './lib/debug-comment.mjs';
 import { issueToClose } from './lib/merged.mjs';
 import { loadConfig } from './lib/config.mjs';
@@ -22,7 +22,8 @@ const USAGE = `usage:
   cli.mjs debug-info --config <f> --selection <f> --out <dir>
   cli.mjs debug-skip-verdict --selection <f>
   cli.mjs debug-fallback-verdict --selection <f>
-  cli.mjs render-debug-comment --verdict <f> --run-url <u>`;
+  cli.mjs render-debug-comment --verdict <f> --run-url <u>
+  cli.mjs render-review-comments --verdict <f> --out <dir>`;
 
 const read = (f) => JSON.parse(readFileSync(f, 'utf8'));
 const print = (obj) => process.stdout.write(`${JSON.stringify(obj, null, 2)}\n`);
@@ -136,6 +137,16 @@ switch (command) {
   case 'debug-fallback-verdict':
     print(blockedDebugVerdict(read(values.selection), 'harness', 'the run ended without a verdict (crash or job timeout); see the run log'));
     break;
+  case 'render-review-comments': {
+    const v = read(values.verdict);
+    if (!v.review) break;
+    mkdirSync(values.out, { recursive: true });
+    for (const round of v.review.rounds) {
+      writeFileSync(join(values.out, `round-${String(round.n).padStart(2, '0')}.md`), renderReviewRound(round));
+    }
+    writeFileSync(join(values.out, 'summary.md'), renderReviewSummary(v.review));
+    break;
+  }
   case 'render-debug-comment':
     process.stdout.write(renderDebugComment(read(values.verdict), { runUrl: values['run-url'] }));
     break;

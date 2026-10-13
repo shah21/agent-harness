@@ -1,7 +1,7 @@
 // Pure helpers for tasks whose code lives in a separate target repository.
 export const BRANCH_RE = /^[a-z0-9][a-z0-9._/-]{0,99}$/;
 export const RELATED_TOKEN = '<!-- agent-related -->';
-export const TEMPLATE_VARS = ['issue', 'task', 'taskTitle', 'summary', 'changedFiles', 'checks', 'related'];
+export const TEMPLATE_VARS = ['issue', 'task', 'taskTitle', 'summary', 'changedFiles', 'checks', 'related', 'review'];
 
 const TYPES = ['feat', 'fix', 'chore', 'refactor', 'test', 'docs', 'perf'];
 const TYPE_RE = new RegExp(`^(${TYPES.join('|')}):\\s*(.+)$`);
