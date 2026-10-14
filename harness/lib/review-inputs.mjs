@@ -1,7 +1,8 @@
 // What the reviewer and the fixer are shown. Rules and context files are read at each
 // repository's base commit, so the change under review cannot rewrite what it is judged by.
 import { execFileSync } from 'node:child_process';
-import { posix } from 'node:path';
+import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { posix, join, dirname } from 'node:path';
 import { matchesAny } from './glob.mjs';
 import { renderPrompt, servicesRule } from './agent.mjs';
 
@@ -71,6 +72,58 @@ export function nearestContext(repos, changed) {
     const { repo, path } = picked.get(full);
     return { path: full, text: cap(show(repo, path), LIMITS.file) };
   });
+}
+
+const SKILL_CAP = 1024 * 1024;
+
+// The project's review skill as it was at base, so the change under review cannot rewrite its own review.
+export function copySkill(repos, skillDir, destDir) {
+  const repo = owner(repos, `${skillDir}/`);
+  const inner = skillDir.slice(repo.prefix.length);
+  const within = inner ? `${inner}/` : '';
+  const files = [...blobsAt(repo)].filter((p) => p.startsWith(within)).sort();
+  if (!files.includes(`${within}SKILL.md`)) return { error: `review skill not found: ${skillDir}/SKILL.md` };
+  rmSync(destDir, { recursive: true, force: true });
+  let total = 0;
+  for (const p of files) {
+    const text = show(repo, p);
+    total += text.length;
+    if (total > SKILL_CAP) return { error: `review skill is larger than 1 MB: ${skillDir}` };
+    const dest = join(destDir, p.slice(within.length));
+    mkdirSync(dirname(dest), { recursive: true });
+    writeFileSync(dest, text);
+  }
+  return { files: files.map((p) => p.slice(within.length)) };
+}
+
+export function planGoal(planText) {
+  const text = String(planText).replace(/\r\n/g, '\n');
+  const first = /^#{2,3} Task \d+:/m.exec(text);
+  return cap((first ? text.slice(0, first.index) : text).trim(), LIMITS.file);
+}
+
+const HUNK = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/;
+
+// Lines a finding may anchor to: what each hunk adds or changes; a deletion-only hunk anchors at its start.
+export function changedHunks(repos) {
+  const hunks = new Map();
+  for (const r of repos) {
+    let file = null;
+    const diff = git(r.dir, 'diff', '-U0', '-M', '--no-color', '--no-ext-diff', '--src-prefix=a/', '--dst-prefix=b/', r.base, 'HEAD');
+    for (const line of diff.split('\n')) {
+      if (line.startsWith('+++ ')) {
+        file = line === '+++ /dev/null' ? null : r.prefix + line.slice(6);
+        if (file && !hunks.has(file)) hunks.set(file, []);
+        continue;
+      }
+      const m = HUNK.exec(line);
+      if (!m || !file) continue;
+      const start = Number(m[1]);
+      const count = m[2] === undefined ? 1 : Number(m[2]);
+      hunks.get(file).push(count === 0 ? [start, start] : [start, start + count - 1]);
+    }
+  }
+  return hunks;
 }
 
 export function changedPaths(repos) {
