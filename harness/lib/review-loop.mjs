@@ -7,13 +7,17 @@ import { execFileSync } from 'node:child_process';
 import { runWithTimeout } from './run-cmd.mjs';
 import { agentCommand, agentEnv, detectUsageLimit } from './agent.mjs';
 import { snapshot, enforceReadOnly } from './debug-guard.mjs';
-import { parseReviewOutput, parseFixReplies, withoutCommit, nextStep, actionable, openFindings, fitsBudget } from './review.mjs';
 import {
-  readRules, nearestContext, changedPaths, diffText, planTaskSection, historyText, renderReviewPrompt, renderFixPrompt,
+  parseReviewOutput, parseFixReplies, withoutCommit, nextStep, actionable, openFindings, fitsBudget, parseVerifyReplies, applyVerification,
+} from './review.mjs';
+import {
+  readRules, nearestContext, changedPaths, changedHunks, diffText, planTaskSection, planGoal, historyText, copySkill,
+  renderReviewPrompt, renderFixPrompt, renderVerifyPrompt,
 } from './review-inputs.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const REVIEW_TOOLS = 'Read,Glob,Grep,Write';
+// Reviewer and verifier may run commands to probe the change; read-only is enforced by snapshot and revert.
+const REVIEW_TOOLS = 'Read,Glob,Grep,Write,Bash';
 
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const key = (r) => r.prefix || '.';
@@ -44,6 +48,9 @@ export async function runReviewLoop({
 
   const reviewTemplate = readFileSync(join(HERE, '..', 'review-prompt.md'), 'utf8');
   const fixTemplate = readFileSync(join(HERE, '..', 'fix-prompt.md'), 'utf8');
+  const verifyTemplate = readFileSync(join(HERE, '..', 'verify-prompt.md'), 'utf8');
+  const goal = planGoal(planText);
+  const skillDir = join(outDir, 'review-skill');
   const planTask = planTaskSection(planText, task);
 
   // One agent session, tried on each account in turn while the account is out of usage.
@@ -68,7 +75,12 @@ export async function runReviewLoop({
 
   try {
     const rules = readRules(repos, rc.rules);
-    for (let n = 1; ; n++) {
+    const skill = copySkill(repos, rc.skill, skillDir);
+    if (skill.error) {
+      exit = 'reviewer-error';
+      error = skill.error;
+    }
+    for (let n = 1; !exit; n++) {
       if (n > 1 && !fitsBudget({ elapsedSec: elapsed(), budgetSec: rc.timeout, longestStepSec: longest })) { exit = 'budget'; break; }
       const reviewStart = Date.now();
       const paths = changedPaths(repos);
@@ -77,24 +89,40 @@ export async function runReviewLoop({
       const review = await session({
         name: `review-${n}`, round: n, model: rc.model, tools: REVIEW_TOOLS, outputPath: reviewPath, override: env.AGENT_REVIEW_CMD,
         promptText: renderReviewPrompt(reviewTemplate, {
-          round: n, planTask, diff: diffText(repos), rules, contexts: nearestContext(repos, paths), history: historyText(rounds), outputPath: reviewPath,
+          round: n, goal, skillDir, planTask, diff: diffText(repos), rules, contexts: nearestContext(repos, paths), history: historyText(rounds), outputPath: reviewPath,
         }),
       });
       if (enforceReadOnly(snaps).length) warnings.push(`review round ${n}: the reviewer changed the checkout; changes were discarded`);
       if (review.limited) { exit = 'usage-limit'; break; }
       if (review.timedOut) { exit = 'budget'; break; }
-      const parsed = parseReviewOutput(review.text, paths);
+      const parsed = parseReviewOutput(review.text, paths, changedHunks(repos));
       if (!parsed.ok) { exit = 'reviewer-error'; error = parsed.error; break; }
 
-      const round = { n, findings: parsed.findings };
+      // A fresh session tries to refute each high and medium finding before anything is fixed.
+      let findings = parsed.findings;
+      const toCheck = findings.filter((f) => f.severity !== 'low');
+      if (toCheck.length) {
+        const verifyPath = join(outDir, `verify-${n}.md`);
+        const verifySnaps = snapshot(repos.map((r) => r.dir));
+        const check = await session({
+          name: `verify-${n}`, round: n, model: rc.model, tools: REVIEW_TOOLS, outputPath: verifyPath, override: env.AGENT_VERIFY_CMD,
+          promptText: renderVerifyPrompt(verifyTemplate, { round: n, skillDir, planTask, diff: diffText(repos), findings: toCheck, outputPath: verifyPath }),
+        });
+        if (enforceReadOnly(verifySnaps).length) warnings.push(`review round ${n}: the verifier changed the checkout; changes were discarded`);
+        const failed = check.limited || check.timedOut || check.text === null;
+        if (failed) warnings.push(`review round ${n}: verification failed; all findings kept`);
+        findings = applyVerification(findings, parseVerifyReplies(failed ? null : check.text, toCheck.map((f) => f.id)));
+      }
+
+      const round = { n, findings };
       rounds.push(round);
       longest = Math.max(longest, (Date.now() - reviewStart) / 1000);
-      const step = nextStep({ round: n, maxRounds: rc.maxRounds, findings: parsed.findings, previous: rounds.at(-2)?.findings ?? null });
+      const step = nextStep({ round: n, maxRounds: rc.maxRounds, findings, previous: rounds.at(-2)?.findings ?? null });
       if (step !== 'fix') { exit = step; round.durationSec = Math.round((Date.now() - reviewStart) / 1000); break; }
       if (!fitsBudget({ elapsedSec: elapsed(), budgetSec: rc.timeout, longestStepSec: longest })) { exit = 'budget'; break; }
 
       const fixStart = Date.now();
-      const toFix = actionable(parsed.findings);
+      const toFix = actionable(findings);
       const ids = toFix.map((f) => f.id);
       const fixPath = join(outDir, `fix-${n}.md`);
       const fix = await session({
