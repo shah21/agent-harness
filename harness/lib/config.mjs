@@ -38,6 +38,16 @@ function stringArray(value, field) {
   return value;
 }
 
+// Trailer keys a project does not want in agent commits, e.g. Co-Authored-By. Off by default:
+// some projects require trailers such as Signed-off-by.
+function trailerKeys(value) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.some((k) => typeof k !== 'string' || !/^[A-Za-z][A-Za-z0-9-]*$/.test(k))) {
+    throw new Error('"forbiddenTrailers" must be an array of trailer names like "Co-Authored-By"');
+  }
+  return [...value];
+}
+
 // Globs are matched against project-relative paths, so they must stay inside the project.
 function artifactGlobs(value) {
   const globs = stringArray(value, 'artifacts');
@@ -169,6 +179,7 @@ export function loadConfig(text) {
     timeouts,
     protectedPaths: [...new Set([...ALWAYS_PROTECTED, ...stringArray(raw.protectedPaths, 'protectedPaths')])],
     testGlobs: raw.testGlobs === undefined ? DEFAULTS.testGlobs : stringArray(raw.testGlobs, 'testGlobs'),
+    forbiddenTrailers: trailerKeys(raw.forbiddenTrailers),
     env: envMap(raw.env),
     artifacts: artifactGlobs(raw.artifacts),
     debug: debugConfig(raw.debug),
