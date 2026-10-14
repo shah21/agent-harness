@@ -171,15 +171,28 @@ export function findingsText(findings) {
 const block = (name, text) => `<untrusted-data name="${name}">\n${text}\n</untrusted-data>`;
 const files = (list) => (list.length ? list.map((f) => block(f.path, f.text)).join('\n\n') : '(none)');
 
-export function renderReviewPrompt(template, { round, planTask, diff, rules, contexts, history, outputPath }) {
+export function renderReviewPrompt(template, { round, goal = '', skillDir = 'review-skill', planTask, diff, rules, contexts, history, outputPath }) {
   return renderPrompt(template, {
     ROUND: round,
     OUTPUT_PATH: outputPath,
+    SKILL_DIR: skillDir,
+    GOAL: block('plan-goal', goal),
     PLAN_TASK: block('plan-task', planTask),
     DIFF: block('diff', diff),
     RULES: files(rules),
     CONTEXT: files(contexts),
     HISTORY: block('earlier-rounds', history),
+  });
+}
+
+export function renderVerifyPrompt(template, { round, skillDir, planTask, diff, findings, outputPath }) {
+  return renderPrompt(template, {
+    ROUND: round,
+    OUTPUT_PATH: outputPath,
+    SKILL_DIR: skillDir,
+    PLAN_TASK: block('plan-task', planTask),
+    FINDINGS: block('findings', findingsText(findings)),
+    DIFF: block('diff', diff),
   });
 }
 
