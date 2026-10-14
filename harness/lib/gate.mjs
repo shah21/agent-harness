@@ -7,8 +7,17 @@ function blocked(kind, reasons, extra = {}) {
   return { outcome: 'BLOCKED', kind, reasons, warnings: [], ...extra };
 }
 
+const TRAILER = /^([A-Za-z][A-Za-z0-9-]*):\s/;
+
+export function trailerViolations(commits, forbidden) {
+  if (!forbidden.length) return [];
+  const keys = new Set(forbidden.map((k) => k.toLowerCase()));
+  const hits = commits.filter((c) => c.body.split('\n').some((line) => keys.has(TRAILER.exec(line.trim())?.[1].toLowerCase())));
+  return hits.length ? [`commit messages carry forbidden trailers: ${hits.map((c) => c.sha.slice(0, 7)).join(', ')}`] : [];
+}
+
 // Rules any change must keep, whoever made it: protected paths, submodule pointers, existing tests.
-export function diffViolations({ diff, config, pointerErrors = [] }) {
+export function diffViolations({ diff, config, pointerErrors = [], commitErrors = [] }) {
   const touched = diff.flatMap((d) => (d.oldPath ? [d.oldPath, d.path] : [d.path]));
   const protectedHits = [...new Set(touched.filter((p) => matchesAny(p, config.protectedPaths)))];
   if (protectedHits.length) return [`changes touch protected paths: ${protectedHits.join(', ')}`];
@@ -17,11 +26,11 @@ export function diffViolations({ diff, config, pointerErrors = [] }) {
     .filter((d) => (d.status === 'D' && matchesAny(d.path, config.testGlobs)) || (d.status === 'R' && matchesAny(d.oldPath, config.testGlobs)))
     .map((d) => (d.status === 'R' ? d.oldPath : d.path));
   if (removedTests.length) return [`existing tests deleted or renamed: ${removedTests.join(', ')}`];
-  return [];
+  return commitErrors;
 }
 
 // Rows are evaluated in spec order (§7); the first match wins.
-export function decide({ agent, reportText, commits, diff, checks, config, pointerErrors = [] }) {
+export function decide({ agent, reportText, commits, diff, checks, config, pointerErrors = [], commitErrors = [] }) {
   if (agent.timedOut) return blocked('agent', ['agent timed out before finishing']);
   if (agent.exitCode !== 0) {
     if (agent.authFailed) return blocked('agent', ['Claude authentication failed (401): check the CLAUDE_CODE_OAUTH_TOKEN secret']);
@@ -36,7 +45,7 @@ export function decide({ agent, reportText, commits, diff, checks, config, point
   if (report.status === 'BLOCKED') return blocked('report', [report.blocker], { report });
   if (commits === 0) return blocked('gate', ['report says READY_FOR_QA but the branch has no commits'], { report });
 
-  const violations = diffViolations({ diff, config, pointerErrors });
+  const violations = diffViolations({ diff, config, pointerErrors, commitErrors });
   if (violations.length) return blocked('gate', violations, { report });
 
   const failed = Object.entries(checks).filter(([, c]) => !c.ok).map(([name]) => name);

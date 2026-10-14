@@ -8,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { loadConfig } from './lib/config.mjs';
 import { parseTaskRef, findTaskHeading } from './lib/issue.mjs';
-import { decide, diffViolations } from './lib/gate.mjs';
+import { decide, diffViolations, trailerViolations } from './lib/gate.mjs';
 import { runReviewLoop } from './lib/review-loop.mjs';
 import { reviewRepos } from './lib/review-inputs.mjs';
 import { runWithTimeout } from './lib/run-cmd.mjs';
@@ -16,7 +16,7 @@ import { tailLog } from './lib/tail.mjs';
 import { parsePlanTask, comparePlan, conformanceWarnings } from './lib/conformance.mjs';
 import { collectArtifacts } from './lib/artifacts.mjs';
 import { probeAccounts } from './lib/probe.mjs';
-import { agentCommand, agentEnv, renderPrompt, claudeTokens, detectUsageLimit, detectAuthFailure, servicesRule } from './lib/agent.mjs';
+import { agentCommand, agentEnv, renderPrompt, claudeTokens, detectUsageLimit, detectAuthFailure, servicesRule, trailersRule } from './lib/agent.mjs';
 import {
   prepareTarget, startTargetBranches, resetTargets, targetsOffBranch, stashTargets,
   measureTargets, pointerErrors, bundleTargets,
@@ -230,9 +230,9 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
     SERVICES_RULE: servicesRule(Boolean(config.setup)),
     PROTECTED: config.protectedPaths.map((p) => `\`${p}\``).join(', '),
   });
-  const fullPrompt = target
+  const fullPrompt = (target
     ? promptText + targetPromptSection({ path: config.target.path, repo: config.target.repo, branch: target.branch })
-    : promptText;
+    : promptText) + trailersRule(config.forbiddenTrailers);
   const promptFile = join(outDir, 'prompt.md');
   writeFileSync(promptFile, fullPrompt);
 
@@ -322,14 +322,26 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
   const gateConfig = target
     ? { ...config, protectedPaths: [...config.protectedPaths, ...target.repos.map((r) => `${r.path}/.github/**`)] }
     : config;
-  const decision = decide({ agent, reportText, commits, diff, checks, config: gateConfig, pointerErrors: target ? pointerErrors(target) : [] });
+  const commitErrors = () => {
+    const logs = [{ dir: projectDir, base: baseSha }, ...(target ? target.repos.map((r) => ({ dir: r.dir, base: r.baseSha })) : [])];
+    const commits = logs.flatMap(({ dir, base }) => git(dir, 'log', '--format=%H%x1f%B%x1e', `${base}..HEAD`)
+      .split('\x1e').map((s) => s.trim()).filter(Boolean)
+      .map((s) => { const [sha, body = ''] = s.split('\x1f'); return { sha, body }; }));
+    return trailerViolations(commits, config.forbiddenTrailers);
+  };
+  const decision = decide({
+    agent, reportText, commits, diff, checks, config: gateConfig, pointerErrors: target ? pointerErrors(target) : [], commitErrors: commitErrors(),
+  });
   let review = null;
   if (decision.outcome === 'READY_FOR_QA' && config.review) {
     const loop = await runReviewLoop({
       config, repos: reviewRepos({ projectDir, baseSha, branch: meta.branch, target }), planText, task: ref.task,
       implementerModel: meta.model, accounts, env, projectDir, outDir, logsDir, verify: verifyCheckout,
-      gateReasons: () => diffViolations({ diff: measure().diff, config: gateConfig, pointerErrors: target ? pointerErrors(target) : [] }),
-      targetSection: target ? targetPromptSection({ path: config.target.path, repo: config.target.repo, branch: target.branch }) : '',
+      gateReasons: () => diffViolations({
+        diff: measure().diff, config: gateConfig, pointerErrors: target ? pointerErrors(target) : [], commitErrors: commitErrors(),
+      }),
+      promptSuffix: (target ? targetPromptSection({ path: config.target.path, repo: config.target.repo, branch: target.branch }) : '')
+        + trailersRule(config.forbiddenTrailers),
     });
     review = loop.review;
     warnings.push(...loop.warnings);
