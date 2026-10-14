@@ -1,16 +1,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { runTarget, AGENTS } from './helpers/target-fixture.mjs';
 
-const REVIEW = { maxRounds: 2, timeout: '2m', maxTurns: 5 };
+const REVIEW = { skill: 'skill', maxRounds: 2, timeout: '2m', maxTurns: 5 };
 const withReview = (dir) => {
   const path = join(dir, 'agent.config.json');
   const config = JSON.parse(readFileSync(path, 'utf8'));
   config.review = REVIEW;
   writeFileSync(path, JSON.stringify(config, null, 2));
+  mkdirSync(join(dir, 'skill'), { recursive: true });
+  writeFileSync(join(dir, 'skill', 'SKILL.md'), '# Fixture review skill\n');
 };
 const sha = (dir) => execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
 const branch = (dir) => execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
@@ -19,7 +21,11 @@ async function run(fixer) {
   return runTarget({
     agent: 'target-honest.sh',
     mutate: withReview,
-    env: { AGENT_REVIEW_CMD: `sh "${join(AGENTS, 'target-review-once.sh')}"`, AGENT_FIX_CMD: `sh "${join(AGENTS, fixer)}"` },
+    env: {
+      AGENT_REVIEW_CMD: `sh "${join(AGENTS, 'target-review-once.sh')}"`,
+      AGENT_FIX_CMD: `sh "${join(AGENTS, fixer)}"`,
+      AGENT_VERIFY_CMD: `sh "${join(AGENTS, 'verify-confirm.sh')}"`,
+    },
   });
 }
 
