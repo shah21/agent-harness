@@ -105,13 +105,14 @@ Read-only is enforced, not just prompted: after the run, any change to `HEAD`, t
 
 ## Review loop
 
-With a `review` block in `agent.config.json`, every task that ends `READY_FOR_QA` is reviewed before it is published. A fresh reviewer (read-only: it cannot change the checkout) judges the change against the plan task and the project's rules. High and medium findings go to a fresh fixer, the checks run again, and the next review checks the fix. Low findings are reported, never fixed.
+With a `review` block in `agent.config.json`, every task that ends `READY_FOR_QA` is reviewed before it is published. A fresh reviewer follows the project's own review skill, judges the change against the plan goal and task, and may probe it with commands; it cannot change the checkout. A fresh verifier then tries to refute each high and medium finding. Confirmed ones go to a fresh fixer, the checks run again, and the next review checks the fix. Low findings are reported, never fixed.
 
 ```json
 {
   "review": {
-    "rules": ["docs/review/*.md", "target/AGENTS.md"],
-    "model": "sonnet",
+    "skill": ".agents/skills/code-review",
+    "rules": ["docs/review/*.md"],
+    "model": "opus",
     "maxRounds": 2,
     "timeout": "40m",
     "maxTurns": 60
@@ -119,13 +120,17 @@ With a `review` block in `agent.config.json`, every task that ends `READY_FOR_QA
 }
 ```
 
-- `rules`: globs, relative to the repository that queues the run (`target/...` reaches into a target clone), of files that hold the project's review standards. The reviewer also reads the nearest `AGENTS.md` / `CLAUDE.md` above each changed file. All of them are read at the base commit, never from the agent's branch. The harness knows no folder names; this is the consumer's convention.
+- `skill` (required): a directory with a `SKILL.md` and any reference files, relative to the repository that queues the run (`target/...` reaches into a target clone). Use the project's own review skill, or a copy of a generic code-review skill. The harness copies it at the base commit into `review-skill/` in the run output and tells the reviewer to follow it unattended: steps that ask a human, post to GitHub or file issues are skipped, and the skill's severity words are mapped onto high, medium and low.
+- `rules`: optional globs of extra standards files. The reviewer also reads the nearest `AGENTS.md` / `CLAUDE.md` above each changed file. All of them are read at the base commit, never from the agent's branch.
+- `model`: default `opus`, for the reviewer and the verifier.
 - `maxRounds` (1–3) counts reviews. A fix runs only when another review will check it: `1` reviews without fixing, `2` is review → fix → review.
 - `timeout` is the budget for the whole loop. The run job's own timeout still applies.
 
-The loop stops when no high or medium finding is left, at the round limit, when the same findings come back, when a fix breaks the checks or a harness rule (the fix is reverted), when the budget or Claude usage runs out, or when the reviewer's output cannot be read. Whatever the reason, the task stays `READY_FOR_QA` and every repository is published at the last state whose checks passed. Findings still open are listed in the PR's `## Review` section, and the issue gets the `agent:review-open` label.
+The plan goal and the task text outrank the plan's code: a defect copied from the plan is still a finding. High and medium findings must point at a line inside a changed hunk. The verifier answers `CONFIRMED` or `WITHDRAWN` with evidence for each; a missing answer, or a verifier that fails, keeps the finding.
 
-The task issue gets one comment per round (findings, fixes, declined findings with reasons, checks after the fix) and a summary. Target PR bodies are unchanged unless their template uses `{review}`, a one-line summary of open findings.
+The loop stops when no confirmed high or medium finding is left, at the round limit, when the same findings come back, when a fix breaks the checks or a harness rule (the fix is reverted), when the budget or Claude usage runs out, or when the review cannot be completed (for example the skill is missing at base). Whatever the reason, the task stays `READY_FOR_QA` and every repository is published at the last state whose checks passed. Findings still open are listed in the PR's `## Review` section, and the issue gets the `agent:review-open` label.
+
+The task issue gets one comment per round (findings, what the verifier withdrew and why, fixes, declined findings with reasons, checks after the fix) and a summary. Target PR bodies are unchanged unless their template uses `{review}`, a one-line summary of open findings.
 
 Without a `review` block nothing changes.
 
