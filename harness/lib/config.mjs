@@ -104,6 +104,10 @@ function debugConfig(value) {
 function reviewConfig(value) {
   if (value === undefined) return null;
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('"review" must be an object');
+  const skill = value.skill;
+  if (!relativeInside(skill)) {
+    throw new Error('"review.skill" must be a relative path inside the repository (a directory holding SKILL.md)');
+  }
   const rules = value.rules ?? [];
   if (!Array.isArray(rules) || rules.some((x) => typeof x !== 'string')) throw new Error('"review.rules" must be an array of strings');
   for (const g of rules) {
@@ -111,13 +115,13 @@ function reviewConfig(value) {
       throw new Error(`review rule path "${g}" must be a relative path inside the repository`);
     }
   }
-  const model = value.model ?? 'sonnet';
+  const model = value.model ?? 'opus';
   if (typeof model !== 'string' || !model) throw new Error('"review.model" must be a non-empty string');
   const maxRounds = value.maxRounds ?? 2;
   if (!Number.isInteger(maxRounds) || maxRounds < 1 || maxRounds > 3) throw new Error('"review.maxRounds" must be an integer from 1 to 3');
   const maxTurns = value.maxTurns ?? 60;
   if (!Number.isInteger(maxTurns) || maxTurns < 1) throw new Error('"review.maxTurns" must be a positive integer');
-  return { rules: [...rules], model, maxRounds, timeout: parseDuration(value.timeout ?? '40m'), maxTurns };
+  return { skill, rules: [...rules], model, maxRounds, timeout: parseDuration(value.timeout ?? '40m'), maxTurns };
 }
 
 export function loadConfig(text) {
