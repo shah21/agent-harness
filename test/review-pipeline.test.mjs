@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, mkdtempSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { cpSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -11,11 +11,13 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const AGENTS = join(HERE, 'fake-agents');
 const ISSUE = { number: 7, title: 'Task 1', body: 'plan: docs/plan.md\ntask: 1\n', labels: ['agent'] };
 const ID = ['-c', 'user.name=test', '-c', 'user.email=test@example.com'];
-const REVIEW = { maxRounds: 2, timeout: '2m', maxTurns: 5 };
+const REVIEW = { skill: 'skill', maxRounds: 2, timeout: '2m', maxTurns: 5 };
 
 function makeProject(review, files = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'review-project-'));
   cpSync(join(HERE, 'fixtures', 'project'), dir, { recursive: true });
+  mkdirSync(join(dir, 'skill'), { recursive: true });
+  writeFileSync(join(dir, 'skill', 'SKILL.md'), '# Fixture review skill\n\nReview the change against its task.\n');
   const configPath = join(dir, 'agent.config.json');
   const config = JSON.parse(readFileSync(configPath, 'utf8'));
   if (review !== undefined) config.review = review;
@@ -38,6 +40,7 @@ async function run({ reviewer = 'review-clean.sh', fixer = 'fix-good.sh', files,
     AGENT_CMD: `sh "${join(AGENTS, 'honest.sh')}"`,
     AGENT_REVIEW_CMD: `sh "${join(AGENTS, reviewer)}"`,
     AGENT_FIX_CMD: `sh "${join(AGENTS, fixer)}"`,
+    AGENT_VERIFY_CMD: `sh "${join(AGENTS, 'verify-confirm.sh')}"`,
   };
   const verdict = await runTask({ projectDir, issue: ISSUE, outDir, baseBranch: 'main', env });
   return { verdict, projectDir, outDir };
@@ -59,7 +62,7 @@ test('a clean first review ends the loop', async () => {
   const { verdict } = await run({ reviewer: 'review-clean.sh' });
   assert.equal(verdict.outcome, 'READY_FOR_QA');
   assert.equal(verdict.review.exit, 'clean');
-  assert.equal(verdict.review.model, 'sonnet');
+  assert.equal(verdict.review.model, 'opus');
   assert.deepEqual(verdict.review.rounds.map((r) => r.n), [1]);
   assert.deepEqual(verdict.review.open, []);
   assert.equal(verdict.commits, 1);
