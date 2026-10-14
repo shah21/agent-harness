@@ -33,7 +33,7 @@ function resetTo(repos, shas) {
 }
 
 export async function runReviewLoop({
-  config, repos, planText, task, implementerModel, accounts, env, projectDir, outDir, logsDir, verify, gateReasons, targetSection = '',
+  config, repos, planText, task, implementerModel, accounts, env, projectDir, outDir, logsDir, verify, gateReasons, promptSuffix = '',
 }) {
   const rc = config.review;
   const started = Date.now();
@@ -131,7 +131,7 @@ export async function runReviewLoop({
         promptText: renderFixPrompt(fixTemplate, {
           round: n, branch: repos[0].branch, planTask, diff: diffText(repos), findings: toFix, outputPath: fixPath,
           checks: config.checks, protectedPaths: config.protectedPaths, hasSetup: Boolean(config.setup),
-        }) + targetSection,
+        }) + promptSuffix,
       });
       if (fix.limited) { resetTo(repos, green); exit = 'usage-limit'; break; }
       round.fixes = parseFixReplies(fix.text, ids);

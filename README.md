@@ -42,6 +42,8 @@ Checks that need running services (a database, a browser) get them from an optio
 
 `artifacts` lists globs (relative to the project root) whose files are copied into the run artifact after the harness's verification checks (or after a red baseline): test reports, screenshots, traces. Caps: 50 MB and 2,000 files. Symlinks, `.git` and `node_modules` are skipped. Artifacts of public repositories are downloadable by any signed-in GitHub user, so never collect anything secret.
 
+- `forbiddenTrailers`: commit trailer keys agents must not use, for example `["Co-Authored-By"]`. Agents are told; a commit that still carries one blocks the task (`gate`), and a review fix that carries one is reverted. Default: none.
+
 ```json
 {
   "install": "pnpm install --frozen-lockfile",

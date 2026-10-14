@@ -43,6 +43,11 @@ export function servicesRule(hasSetup) {
   return hasSetup ? `Services started by the project's setup command are already running. ${NO_DEV_SERVERS}` : NO_DEV_SERVERS;
 }
 
+export function trailersRule(forbidden) {
+  if (!forbidden.length) return '';
+  return `\n\n## Commit messages\n\nDo not add these trailers to any commit message: ${forbidden.join(', ')}. Commits that carry them are rejected.\n`;
+}
+
 const TOKEN_VARS = ['CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN_2'];
 
 // Accounts in the order they are tried; an empty secret means "not configured".
