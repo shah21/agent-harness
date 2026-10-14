@@ -7,10 +7,10 @@ const REPLY = /^(R\d+):\s*(FIXED|WONTFIX)(?::\s*(.*))?$/;
 
 const fail = (error) => ({ ok: false, error });
 
-export const actionable = (findings) => findings.filter((f) => f.severity !== 'low');
+export const actionable = (findings) => findings.filter((f) => f.severity !== 'low' && f.verification !== 'WITHDRAWN');
 export const fingerprint = (f) => `${f.file}#${f.rule}`;
 
-function checkFinding(f, at, seen, inDiff) {
+function checkFinding(f, at, seen, inDiff, hunks) {
   if (!f || typeof f !== 'object' || Array.isArray(f)) return `${at} must be an object`;
   if (typeof f.id !== 'string' || !ID.test(f.id)) return `${at}: "id" must look like R1`;
   if (seen.has(f.id)) return `${at}: duplicate id ${f.id}`;
@@ -21,10 +21,14 @@ function checkFinding(f, at, seen, inDiff) {
   if (typeof f.problem !== 'string' || !f.problem.trim()) return `${f.id}: "problem" must be a non-empty string`;
   if (f.fix !== undefined && typeof f.fix !== 'string') return `${f.id}: "fix" must be a string`;
   if (f.severity !== 'low' && !inDiff.has(f.file)) return `${f.id}: "${f.file}" is not in the diff`;
+  if (hunks && f.severity !== 'low') {
+    if (!Number.isInteger(f.line)) return `${f.id}: "line" is required for high and medium findings`;
+    if (!(hunks.get(f.file) ?? []).some(([a, b]) => f.line >= a && f.line <= b)) return `${f.id}: line ${f.line} of "${f.file}" is not in a changed hunk`;
+  }
   return null;
 }
 
-export function parseReviewOutput(text, diffPaths) {
+export function parseReviewOutput(text, diffPaths, hunks = null) {
   const m = FENCE.exec(String(text ?? ''));
   if (!m) return fail('no ```json block in the review');
   let raw;
@@ -41,7 +45,7 @@ export function parseReviewOutput(text, diffPaths) {
   const seen = new Set();
   const findings = [];
   for (const [i, f] of list.entries()) {
-    const error = checkFinding(f, `finding ${i + 1}`, seen, inDiff);
+    const error = checkFinding(f, `finding ${i + 1}`, seen, inDiff, hunks);
     if (error) return fail(error);
     seen.add(f.id);
     findings.push({ id: f.id, severity: f.severity, file: f.file, line: f.line ?? null, rule: f.rule, problem: f.problem.trim(), fix: (f.fix ?? '').trim() });
@@ -90,3 +94,19 @@ export function openFindings(rounds) {
 export function fitsBudget({ elapsedSec, budgetSec, longestStepSec }) {
   return budgetSec - elapsedSec > longestStepSec;
 }
+
+const VERDICT = /^(R\d+):\s*(CONFIRMED|WITHDRAWN)(?::\s*(.*))?$/;
+
+// A finding stays unless the verifier withdrew it with evidence.
+export function parseVerifyReplies(text, ids) {
+  const found = new Map();
+  for (const line of String(text ?? '').split('\n')) {
+    const m = VERDICT.exec(line.trim());
+    if (!m || !ids.includes(m[1]) || found.has(m[1])) continue;
+    const evidence = m[3]?.trim();
+    found.set(m[1], m[2] === 'WITHDRAWN' && evidence ? { verification: 'WITHDRAWN', evidence } : { verification: 'CONFIRMED' });
+  }
+  return new Map(ids.map((id) => [id, found.get(id) ?? { verification: 'CONFIRMED' }]));
+}
+
+export const applyVerification = (findings, verdicts) => findings.map((f) => (verdicts.has(f.id) ? { ...f, ...verdicts.get(f.id) } : f));
