@@ -68,12 +68,17 @@ export function renderReviewRound(round) {
   const counts = SEVERITIES.map((s) => `${round.findings.filter((f) => f.severity === s).length} ${s}`).join(', ');
   const act = actionable(round.findings);
   const low = round.findings.filter((f) => f.severity === 'low');
+  const gone = round.findings.filter((f) => f.verification === 'WITHDRAWN');
   const lines = [`<!-- agent-review round=${round.n} -->`, `### Review round ${round.n} — ${counts}`, ''];
   if (act.length) {
     lines.push('| id | sev | file | rule | problem | result |', '|---|---|---|---|---|---|',
       ...act.map((f) => `| ${f.id} | ${f.severity} | \`${cell(where(f))}\` | ${cell(f.rule)} | ${cell(f.problem)} | ${cell(resultCell(f, round))} |`));
   } else {
-    lines.push('No high or medium findings.');
+    lines.push(gone.length ? 'No confirmed high or medium findings.' : 'No high or medium findings.');
+  }
+  if (gone.length) {
+    lines.push('', `<details><summary>${gone.length} withdrawn by verification</summary>`, '',
+      ...gone.map((f) => `- ${f.id} ${f.severity} \`${where(f)}\` ${f.rule}: ${f.problem} Evidence: ${f.evidence}`), '', '</details>');
   }
   if (round.reverted) {
     lines.push('', '**Reverted:** the fix was discarded; the branch is back on the last state whose checks passed.', ...checkTails(round.checks));
