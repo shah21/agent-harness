@@ -193,3 +193,49 @@ Non-empty `open` adds `agent:review-open`; bootstrap creates it. Dashboards can 
 ## 11. Out of scope
 
 Live per-round comments during the run, reviewing debug runs, dashboard changes, run-history storage, auto-blocking on review findings.
+
+## 12. Addendum (2026-10-14): project review skill, read-only commands, verify pass
+
+A dry run showed the first reviewer accepting a defect because the code "matched the plan exactly": the reviewer treated the plan's code as the authority, could not run anything to probe an edge case, and had no review method beyond a short generic prompt. Reviews done by hand with a project's own review skill catch such defects. This addendum makes the loop run a project's review skill unattended. It supersedes the parts of §3–§5 it contradicts.
+
+### 12.1 Review skill
+
+- `review.skill` (required when `review` is set): a directory holding `SKILL.md` and any reference files, relative to the consumer root (`target/...` reaches into the target clone), same path rules as `rules`. The harness ships no review method and names none; each project brings its own (its existing review skill, or a copy of a generic code-review skill).
+- Before the first round the harness copies every file under that directory, **at the owning repository's base commit**, into `review-skill/` in the run's output directory. A missing directory or missing `SKILL.md` ends the loop `reviewer-error` (`review skill not found: <dir>/SKILL.md`) before any agent runs. Copy cap: 1 MB.
+- The reviewer is told to read `review-skill/SKILL.md` first and open its reference files when the skill points to them, as a skill is used interactively. The skill's name and description are irrelevant to the harness.
+- A fixed unattended frame in the harness prompt wraps any skill: skip every step that asks a human, waits for approval, posts to GitHub or files issues; the plan goal, the plan task and the diff are the intake; map the skill's severity words onto `high` / `medium` / `low` (blocker, critical, high → high; important, medium → medium; minor, low, nit, suggestion → low); write the harness JSON (§5) and nothing else.
+- `review.rules` stays, optional, for extra standards files.
+
+### 12.2 Authority order
+
+The prompt states it: (1) the plan's goal and the task's text, (2) the review skill and `rules`, (3) the plan's code, a hint only. Matching the plan's code proves nothing; a defect copied from the plan is still a finding. The plan goal is the plan text before its first `## Task` heading, capped at 20,000 characters.
+
+### 12.3 Reviewer tools
+
+`Read,Glob,Grep,Write,Bash`. Read-only is still enforced by snapshot and revert (§4); the environment holds no GitHub token; services started by `setup` are running. The prompt invites probing: run the tests, call the changed code with edge-case inputs, apply a mutation (break the change, run the tests, see whether they fail) and undo it. Anything left changed is reverted and noted as today.
+
+### 12.4 Anchors
+
+High and medium findings must carry `line`, inside a changed hunk of `file` at the reviewed commit (from `git diff -U0`; a deletion-only hunk anchors at its start line). A missing or outside line is `reviewer-error`. Low findings keep `line` optional.
+
+### 12.5 Verify pass
+
+After every review with high or medium findings, a fresh session (the review model, the reviewer's tools, read-only enforced the same way) gets those findings, the diff and the review skill, and tries to refute each one: is the anchor right, are the factual claims true, can the code path actually run. It writes one line per id:
+
+```
+R1: CONFIRMED
+R2: WITHDRAWN: <one-sentence evidence>
+```
+
+- Each high/medium finding gains `verification: "CONFIRMED" | "WITHDRAWN"`; withdrawn ones also get `evidence`. Withdrawn findings are excluded from fixing, from `open` and from the no-progress fingerprint, and are listed in the round comment.
+- A missing line counts as `CONFIRMED`. A verifier that hits a usage limit, times out or writes nothing leaves every finding `CONFIRMED` and adds the warning `review round <n>: verification failed; all findings kept`. A broken verifier can never hide a finding.
+- Test override: `AGENT_VERIFY_CMD`. Files: `verify-<n>.md`, `verify-<n>.prompt.md`, `logs/verify-<n>.log`.
+
+### 12.6 Defaults and contract
+
+- `review.model` default: `opus`.
+- `verdict.review.rounds[].findings[]` gains `verification` (high/medium only) and `evidence` (withdrawn only). Additive.
+
+### 12.7 Rollout addition
+
+Before tagging: each consumer that opts in adds its review skill directory and `review.skill`. Calibration: rerun the dry run with a seeded defect the plan's own code contains; pass = round 1 reports it. Then, per consumer with an existing hand-run review skill, replay two already-reviewed changes; pass = the loop's confirmed high findings include every blocker and high finding of the hand review.
