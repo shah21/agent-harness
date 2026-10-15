@@ -21,5 +21,9 @@ case "$1 $2" in
     if [ -n "$GH_FAIL_COMMENT_CONTAINING" ] && [ -n "$body" ] && grep -q -- "$GH_FAIL_COMMENT_CONTAINING" "$body"; then
       echo "comment failed" >&2; exit 1
     fi ;;
+  "api "*)
+    if [ -n "$GH_MISSING_BRANCH_REPO" ] && echo "$2" | grep -q "^repos/$GH_MISSING_BRANCH_REPO/branches/"; then
+      exit 1
+    fi ;;
 esac
 exit 0

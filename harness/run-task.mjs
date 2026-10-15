@@ -136,12 +136,16 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
   if (!meta.taskTitle) return finish(blocked('gate', `bad task reference: no "Task ${ref.task}:" heading in ${ref.plan}`));
   meta.model = issue.labels.includes('agent:opus') ? 'opus' : config.model;
 
+  if (ref.base && !config.target) {
+    return finish(blocked('gate', 'bad task reference: "base:" needs a "target" in agent.config.json'));
+  }
+
   // Validate the target before any Claude usage or slow work.
   let target = null;
   if (config.target) {
     target = prepareTarget({
       projectDir, outDir, target: config.target, issue, task: ref.task, taskTitle: meta.taskTitle,
-      parentBases: selection?.targets?.bases ?? null,
+      parentBases: selection?.targets?.bases ?? null, issueBase: ref.base ?? null,
     });
     if (target.error) return finish(blocked('harness', target.error));
   }
