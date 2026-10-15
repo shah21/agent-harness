@@ -70,7 +70,11 @@ export function selectNext({ issues, prs, defaultBranch, ready = [] }) {
     .sort((a, b) => b.marker.task - a.marker.task)[0];
 
   const targets = targetParent({ ready, plan, task });
-  return { issue, plan, task, base: parent ? parent.head : defaultBranch, skip: null, ...(targets ? { targets } : {}) };
+  return {
+    issue, plan, task, base: parent ? parent.head : defaultBranch, skip: null,
+    ...(next.ref.base ? { targetBase: next.ref.base } : {}),
+    ...(targets ? { targets } : {}),
+  };
 }
 
 export function selectDebug({ issues }) {

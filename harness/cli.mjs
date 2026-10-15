@@ -105,7 +105,7 @@ switch (command) {
       break;
     }
     const selection = read(values.selection);
-    process.stdout.write(`repo=${target.repo}\npath=${target.path}\nref=${selection.targets?.superBranch ?? ''}\n`);
+    process.stdout.write(`repo=${target.repo}\npath=${target.path}\nref=${selection.targets?.superBranch ?? selection.targetBase ?? ''}\n`);
     break;
   }
   case 'targets-to-check':

@@ -6,7 +6,7 @@ import { parseGitmodules, renderBranch, fill, TEMPLATE_VARS } from './target.mjs
 
 export const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 
-export function prepareTarget({ projectDir, outDir, target, issue, task, taskTitle, parentBases }) {
+export function prepareTarget({ projectDir, outDir, target, issue, task, taskTitle, parentBases, issueBase }) {
   const reasonFile = join(outDir, 'target-checkout.txt');
   if (existsSync(reasonFile)) return { error: readFileSync(reasonFile, 'utf8').trim() || 'target checkout failed' };
   if (spawnSync('git', ['check-ignore', '-q', `${target.path}/`], { cwd: projectDir }).status !== 0) {
@@ -44,7 +44,7 @@ export function prepareTarget({ projectDir, outDir, target, issue, task, taskTit
       .sort((a, b) => depth(b.path) - depth(a.path) || a.path.localeCompare(b.path))
       .map((s) => ({ repo: s.repo, path: `${target.path}/${s.path}`, role: 'sub', subPath: s.path })),
     { repo: target.repo, path: target.path, role: 'super' },
-  ].map((r) => ({ ...r, dir: join(projectDir, r.path), base: parentBases?.[r.repo] ?? null }));
+  ].map((r) => ({ ...r, dir: join(projectDir, r.path), base: parentBases?.[r.repo] ?? issueBase ?? null }));
   return { branch, repos, prTemplate };
 }
 
