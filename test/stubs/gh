@@ -23,7 +23,7 @@ case "$1 $2" in
     fi ;;
   "api "*)
     if [ -n "$GH_MISSING_BRANCH_REPO" ] && echo "$2" | grep -q "^repos/$GH_MISSING_BRANCH_REPO/branches/"; then
-      exit 1
+      echo "gh: Not Found (HTTP 404)" >&2; exit 1
     fi ;;
 esac
 exit 0
