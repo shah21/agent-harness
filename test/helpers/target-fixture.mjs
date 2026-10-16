@@ -14,7 +14,7 @@ const git = (cwd, ...args) => execFileSync('git', [...ID, ...args], { cwd, encod
 
 // A bare superproject whose .gitmodules names https://github.com/o/sub.git, plus the
 // environment that makes git resolve that URL to a local bare repository.
-function makeRemotes(root) {
+function makeRemotes(root, { branches = [] } = {}) {
   const sub = join(root, 'sub.git');
   const sup = join(root, 'super.git');
   const subWork = join(root, 'sub-work');
@@ -34,6 +34,12 @@ function makeRemotes(root) {
   git(supWork, 'add', '-A');
   git(supWork, 'commit', '-qm', 'super base');
   git(supWork, 'push', '-q', sup, 'main');
+  for (const branch of branches) {
+    git(subWork, 'branch', branch);
+    git(subWork, 'push', '-q', sub, branch);
+    git(supWork, 'branch', branch);
+    git(supWork, 'push', '-q', sup, branch);
+  }
   const gitEnv = {
     GIT_CONFIG_COUNT: '2',
     GIT_CONFIG_KEY_0: `url.${sub}.insteadOf`, GIT_CONFIG_VALUE_0: 'https://github.com/o/sub.git',
@@ -42,9 +48,9 @@ function makeRemotes(root) {
   return { sub, super: sup, gitEnv };
 }
 
-export function makeTargetProject({ mutate, gitignore = true, targetConfig = {}, ref = 'main' } = {}) {
+export function makeTargetProject({ mutate, gitignore = true, targetConfig = {}, ref = 'main', branches = [] } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'harness-target-'));
-  const remotes = makeRemotes(root);
+  const remotes = makeRemotes(root, { branches });
   const projectDir = join(root, 'project');
   cpSync(join(HERE, '..', 'fixtures', 'project'), projectDir, { recursive: true });
   const configPath = join(projectDir, 'agent.config.json');

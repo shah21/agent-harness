@@ -1,11 +1,20 @@
+import { BRANCH_RE } from './target.mjs';
+
 export function parseTaskRef(body) {
   const text = String(body ?? '').replace(/\r\n/g, '\n');
   const plan = /^plan:[ \t]*(\S+)[ \t]*$/m.exec(text)?.[1];
   const task = /^task:[ \t]*(\d+)[ \t]*$/m.exec(text)?.[1];
+  const base = /^base:[ \t]*(\S+)[ \t]*$/m.exec(text)?.[1];
   if (!plan) return { error: 'issue body has no "plan: <path>" line' };
   if (!task) return { error: 'issue body has no "task: <number>" line' };
   if (plan.startsWith('/') || plan.split('/').includes('..')) {
     return { error: `plan path must be relative inside the repo: ${plan}` };
+  }
+  if (base !== undefined) {
+    if (!BRANCH_RE.test(base) || base.includes('..') || base.endsWith('/') || base.endsWith('.lock')) {
+      return { error: `base is not allowed: ${base}` };
+    }
+    return { plan, task: Number(task), base };
   }
   return { plan, task: Number(task) };
 }

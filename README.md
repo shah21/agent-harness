@@ -18,7 +18,7 @@ Quickest: `node harness/bootstrap.mjs --repo owner/name --project <dir>` does st
 
 ## Use
 
-Open an issue whose body is `plan: <path>` and `task: <n>`, then add the `agent` label (`agent:opus` too for hard tasks). Label several before bed; they run one at a time, ordered by plan then task, and dependent tasks stack on each other's PRs. Retry a blocked task by removing `agent:blocked` and adding `agent`.
+Open an issue whose body is `plan: <path>` and `task: <n>`, then add the `agent` label (`agent:opus` too for hard tasks). Label several before bed; they run one at a time, ordered by plan then task, and dependent tasks stack on each other's PRs. Retry a blocked task by removing `agent:blocked` and adding `agent`. With a `target` configured, an optional `base: <branch>` line starts the task from that branch of the target repository (submodules at the commits it records) and opens the PRs against it; a submodule without that branch gets a PR against its default branch. Stacked tasks still build on their parent's branches.
 
 ### Merging stacked PRs
 
@@ -73,6 +73,7 @@ A task can change a repository other than the one that queues it — for example
 - `branch` variables: `{type}` (from a `feat:`/`fix:`/`chore:`/`refactor:`/`test:`/`docs:`/`perf:` prefix of the task title, default `fix`), `{slug}`, `{issue}`, `{task}`.
 - PR template variables: `{taskTitle}`, `{task}`, `{issue}`, `{summary}`, `{changedFiles}`, `{checks}`, `{related}`. The default body has no link back to the consumer.
 - Secrets: `TARGET_READ_TOKEN` (clones the superproject and submodules) and `TARGET_PUSH_TOKEN` (pushes branches, opens draft PRs, checks merges); uncomment both lines in `agent.yml`. They may be the same token.
+- A task issue's `base: <branch>` line (see "Use") starts and targets that branch instead of the default branch.
 
 Each changed repository gets a **draft** PR with the same branch name; submodules are pushed before the superproject, which must point at the submodule commits. The task issue's READY comment lists the PRs and carries an `agent-targets` marker: later tasks of the same plan stack on those branches, and the issue closes when the superproject PR merges. A BLOCKED task pushes nothing to target repositories; its bundles stay in the run artifact for 14 days.
 

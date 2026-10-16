@@ -14,6 +14,15 @@ const token = process.env.TARGET_PUSH_TOKEN ?? '';
 const remoteFor = (repo) =>
   (process.env.TARGET_PUSH_REMOTE_TEMPLATE ?? `https://x-access-token:${token}@github.com/{repo}.git`).replace('{repo}', repo);
 const gh = (...args) => execFileSync('gh', args, { env: { ...process.env, GH_TOKEN: token }, encoding: 'utf8' }).trim();
+const branchExists = (repo, branch) => {
+  try {
+    gh('api', `repos/${repo}/branches/${branch}`);
+    return true;
+  } catch (e) {
+    if (/HTTP 404/.test(String(e.stderr ?? ''))) return false;
+    throw e;
+  }
+};
 const git = (cwd, ...args) =>
   execFileSync('git', ['-c', 'core.hooksPath=/dev/null', ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 
@@ -34,7 +43,9 @@ try {
     git(work, 'push', '-q', '--force', remoteFor(t.repo), `refs/heads/${t.branch}:refs/heads/${t.branch}`);
 
     stage = 'pr';
-    const base = t.base ?? gh('repo', 'view', t.repo, '--json', 'defaultBranchRef', '-q', '.defaultBranchRef.name');
+    const base = t.base && branchExists(t.repo, t.base)
+      ? t.base
+      : gh('repo', 'view', t.repo, '--json', 'defaultBranchRef', '-q', '.defaultBranchRef.name');
     const bodyFile = join(work, 'body.md');
     writeFileSync(bodyFile, t.prBody.replaceAll(RELATED_TOKEN, ''));
     const existing = gh('pr', 'list', '--repo', t.repo, '--head', t.branch, '--state', 'open', '--json', 'number,url', '-q', '.[0] // empty');
