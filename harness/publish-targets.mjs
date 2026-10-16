@@ -14,12 +14,13 @@ const token = process.env.TARGET_PUSH_TOKEN ?? '';
 const remoteFor = (repo) =>
   (process.env.TARGET_PUSH_REMOTE_TEMPLATE ?? `https://x-access-token:${token}@github.com/{repo}.git`).replace('{repo}', repo);
 const gh = (...args) => execFileSync('gh', args, { env: { ...process.env, GH_TOKEN: token }, encoding: 'utf8' }).trim();
-const ghOk = (...args) => {
+const branchExists = (repo, branch) => {
   try {
-    gh(...args);
+    gh('api', `repos/${repo}/branches/${branch}`);
     return true;
-  } catch {
-    return false;
+  } catch (e) {
+    if (/HTTP 404/.test(String(e.stderr ?? ''))) return false;
+    throw e;
   }
 };
 const git = (cwd, ...args) =>
@@ -42,7 +43,7 @@ try {
     git(work, 'push', '-q', '--force', remoteFor(t.repo), `refs/heads/${t.branch}:refs/heads/${t.branch}`);
 
     stage = 'pr';
-    const base = t.base && ghOk('api', `repos/${t.repo}/branches/${t.base}`)
+    const base = t.base && branchExists(t.repo, t.base)
       ? t.base
       : gh('repo', 'view', t.repo, '--json', 'defaultBranchRef', '-q', '.defaultBranchRef.name');
     const bodyFile = join(work, 'body.md');
