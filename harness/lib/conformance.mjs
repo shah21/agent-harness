@@ -2,8 +2,8 @@
 // which have code in the plan that the file matches exactly, and which files
 // the plan does not mention. Advisory only: it produces warnings, never a block.
 const MANIFESTS = new Set(['package.json', 'pnpm-lock.yaml', 'package-lock.json', 'yarn.lock']);
-const FILE_LINE = /^[-*]\s+(Create|Modify|Delete|Test):\s*(.+)$/gm;
-const CODE_BLOCK = /(?:Create|Replace)[^\n`]*`([^`\n]+)`[^\n]*:\n\n```[\w-]*\n([\s\S]*?)\n```/g;
+const FILE_LINE = /^[-*]\s+(Create|Modify|Delete|Test)(?:\s*\([^)\n]*\))?:\s*(.+)$/gm;
+const CODE_BLOCK = /(?:Create|Replace)[^\n`]*`([^`\n]+)`[^\n]*:(?:\*\*)?\n\n```[\w-]*\n([\s\S]*?)\n```/g;
 
 export function parsePlanTask(planText, task) {
   const text = String(planText).replace(/\r\n/g, '\n');

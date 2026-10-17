@@ -100,3 +100,40 @@ test('conformanceWarnings names each kind of mismatch and is silent when all mat
   assert.match(w.join('\n'), /planned files not changed: m/);
   assert.match(w.join('\n'), /not listed in the plan: u/);
 });
+
+const PLAN_NOTES = [
+  '# Plan', '',
+  '## Task 1: Notes', '',
+  '**Files:**',
+  '- Create: `src/a.ts`',
+  '- Test (create exactly): `test/a.test.ts`, `e2e/a.spec.ts`', '',
+  '- [ ] **Step 1: Create `test/a.test.ts`, exactly:**', '',
+  `${FENCE}ts`, 'test(1);', FENCE, '',
+  '- [ ] **Step 2: Create `e2e/a.spec.ts`, exactly:**', '',
+  `${FENCE}ts`, 'test(2);', FENCE, '',
+].join('\n');
+
+test('a parenthetical after the verb still lists the files', () => {
+  assert.deepEqual(parsePlanTask(PLAN_NOTES, 1).files, [
+    { action: 'Create', path: 'src/a.ts' },
+    { action: 'Test', path: 'test/a.test.ts' },
+    { action: 'Test', path: 'e2e/a.spec.ts' },
+  ]);
+});
+
+test('a bold step title ending in ":**" still gives a code block to compare', () => {
+  const t = parsePlanTask(PLAN_NOTES, 1);
+  assert.deepEqual([...t.blocks.keys()], ['test/a.test.ts', 'e2e/a.spec.ts']);
+  assert.equal(t.blocks.get('e2e/a.spec.ts'), 'test(2);');
+});
+
+test('files in a noted Test line count as planned and are compared', () => {
+  const t = parsePlanTask(PLAN_NOTES, 1);
+  const diff = [{ status: 'A', path: 'src/a.ts' }, { status: 'A', path: 'test/a.test.ts' }, { status: 'A', path: 'e2e/a.spec.ts' }];
+  const content = { 'test/a.test.ts': 'test(1);\n', 'e2e/a.spec.ts': 'test(2); // edited\n' };
+  const c = comparePlan(t, diff, (p) => content[p] ?? null);
+  assert.equal(c.planned, 3);
+  assert.deepEqual(c.unexpected, []);
+  assert.deepEqual(c.identical, ['test/a.test.ts']);
+  assert.deepEqual(c.differs, ['e2e/a.spec.ts']);
+});
