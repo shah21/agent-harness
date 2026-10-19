@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Small commands the reusable workflow calls between gh steps.
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { selectNext, selectDebug, targetsToCheck } from './lib/queue.mjs';
@@ -8,6 +8,8 @@ import { renderPrBody, renderComment, renderReviewRound, renderReviewSummary } f
 import { renderDebugComment } from './lib/debug-comment.mjs';
 import { issueToClose } from './lib/merged.mjs';
 import { loadConfig } from './lib/config.mjs';
+import { selectReview, buildReviewSelection, checkoutPlan } from './lib/pr-review.mjs';
+import { parseGitmodules } from './lib/target.mjs';
 
 const USAGE = `usage:
   cli.mjs select --issues <f> --prs <f> --default-branch <b> [--ready <f>]
@@ -23,7 +25,12 @@ const USAGE = `usage:
   cli.mjs debug-skip-verdict --selection <f>
   cli.mjs debug-fallback-verdict --selection <f>
   cli.mjs render-debug-comment --verdict <f> --run-url <u>
-  cli.mjs render-review-comments --verdict <f> --out <dir>`;
+  cli.mjs render-review-comments --verdict <f> --out <dir>
+  cli.mjs select-review --issues <f>
+  cli.mjs review-selection --selection <f> --prs <f> --candidates <f>
+  cli.mjs review-checkouts --config <f> --selection <f> --repo <owner/name> --project <dir> --out <dir>
+  cli.mjs review-skip-verdict --selection <f>
+  cli.mjs review-fallback-verdict --selection <f>`;
 
 const read = (f) => JSON.parse(readFileSync(f, 'utf8'));
 const print = (obj) => process.stdout.write(`${JSON.stringify(obj, null, 2)}\n`);
@@ -46,6 +53,13 @@ function blockedDebugVerdict(selection, kind, reason) {
   };
 }
 
+function blockedReviewVerdict(selection, kind, reason) {
+  return {
+    mode: 'review', outcome: 'BLOCKED', kind, reasons: [reason], warnings: [],
+    issue: selection.issue.number, issueTitle: selection.issue.title, model: null, prs: [], task: null, review: null,
+  };
+}
+
 const [command, ...rest] = process.argv.slice(2);
 let values;
 try {
@@ -56,6 +70,7 @@ try {
       selection: { type: 'string' }, verdict: { type: 'string' }, event: { type: 'string' },
       'run-url': { type: 'string' }, 'pr-url': { type: 'string' },
       ready: { type: 'string' }, config: { type: 'string' }, out: { type: 'string' }, 'target-prs': { type: 'string' },
+      candidates: { type: 'string' }, repo: { type: 'string' }, project: { type: 'string' }, body: { type: 'string' },
     },
   }));
 } catch (e) {
@@ -147,6 +162,29 @@ switch (command) {
     writeFileSync(join(values.out, 'summary.md'), renderReviewSummary(v.review));
     break;
   }
+  case 'select-review':
+    print(selectReview({ issues: read(values.issues) }));
+    break;
+  case 'review-selection':
+    print(buildReviewSelection({ selection: read(values.selection), prData: read(values.prs), candidates: read(values.candidates) }));
+    break;
+  case 'review-checkouts': {
+    const config = loadConfig(readFileSync(values.config, 'utf8'));
+    const modules = config.target ? join(values.project, config.target.path, '.gitmodules') : null;
+    const submodules = modules && existsSync(modules) ? parseGitmodules(readFileSync(modules, 'utf8')) : [];
+    const result = checkoutPlan({ selection: read(values.selection), consumerRepo: values.repo, target: config.target, submodules });
+    if (result.error) writeFileSync(join(values.out, 'pr-checkout.txt'), `${result.error}\n`);
+    else writeFileSync(join(values.out, 'checkout-plan.json'), `${JSON.stringify(result.plan, null, 2)}\n`);
+    break;
+  }
+  case 'review-skip-verdict': {
+    const selection = read(values.selection);
+    print(blockedReviewVerdict(selection, 'gate', selection.skip));
+    break;
+  }
+  case 'review-fallback-verdict':
+    print(blockedReviewVerdict(read(values.selection), 'harness', 'the run ended without a verdict (crash or job timeout); see the run log'));
+    break;
   case 'render-debug-comment':
     process.stdout.write(renderDebugComment(read(values.verdict), { runUrl: values['run-url'] }));
     break;
