@@ -137,6 +137,27 @@ The task issue gets one comment per round (findings, what the verifier withdrew 
 
 Without a `review` block nothing changes.
 
+## Review runs
+
+A `review` label reviews pull requests that already exist, read-only, with the project's review skill (the `review` block, see "Review loop"). Nothing is posted to the pull request, fixed or committed: the review is written into the issue that asked for it.
+
+Open an issue whose body lists the pull requests, one per repository, then add the `review` label:
+
+```
+pr: owner/repo#123
+pr: https://github.com/owner/sub/pull/45
+context: docs/notes.md
+```
+
+- Pull requests must belong to this repository, its `target` or one of the target's submodules. Pull requests in a target need the `TARGET_READ_TOKEN` secret.
+- When a pull request came from a harness task, the reviewer also gets that task's plan goal and section.
+- The reviewer runs the skill unattended, may run commands and start subagents, and must anchor every high and medium finding to a changed line; a verifier then tries to refute each one.
+- Above 50,000 changed lines the run is skipped.
+
+The result replaces everything below `<!-- agent-pr-review -->` in the issue body (your text above it is kept): a verdict, one line per confirmed high or medium finding linked to the line at the pull request head, and lows, withdrawn findings and warnings folded. The label becomes `agent:review-done`; re-add `review` to review again. A blocked run gets `agent:blocked` and a comment; retry by removing it and adding `review`.
+
+Add the `review` job from `templates/agent.yml` to the caller workflow; `bootstrap.mjs` creates the labels.
+
 ## Usage limits and a second account
 
 Before any work, each run tries every configured account with one cheap turn. If an account runs out of usage mid-task, the attempt is discarded and the task restarts on the next account. Set the optional secret `CLAUDE_CODE_OAUTH_TOKEN_2` to add a second account. When every account is out, the issue is labelled `agent:waiting`, the queue pauses, and the scheduled trigger in `agent.yml` resumes it.
