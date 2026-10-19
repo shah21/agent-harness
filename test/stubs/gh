@@ -25,5 +25,7 @@ case "$1 $2" in
     if [ -n "$GH_MISSING_BRANCH_REPO" ] && echo "$2" | grep -q "^repos/$GH_MISSING_BRANCH_REPO/branches/"; then
       echo "gh: Not Found (HTTP 404)" >&2; exit 1
     fi ;;
+  "issue view")
+    printf '%s' "$GH_ISSUE_BODY" ;;
 esac
 exit 0
