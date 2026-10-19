@@ -1,5 +1,6 @@
-// Review → fix → verify rounds after a READY task. The outcome stays READY_FOR_QA whatever
-// happens here; every repository always ends on the last state whose checks passed.
+// Review → fix → verify rounds after a READY task, plus the review step review runs share. The
+// outcome stays READY_FOR_QA whatever happens here; every repository always ends on the last state
+// whose checks passed.
 import { readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,8 +17,10 @@ import {
 } from './review-inputs.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-// Reviewer and verifier may run commands to probe the change; read-only is enforced by snapshot and revert.
-const REVIEW_TOOLS = 'Read,Glob,Grep,Write,Bash';
+// Reviewer and verifier may run commands and start subagents (a review skill's large-change tier) to
+// probe the change; read-only is enforced by snapshot and revert. Claude Code has named the subagent
+// tool both Agent and Task.
+export const REVIEW_TOOLS = 'Read,Glob,Grep,Write,Bash,Agent,Task';
 
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const key = (r) => r.prefix || '.';
@@ -30,6 +33,71 @@ function resetTo(repos, shas) {
     git(r.dir, 'reset', '-q', '--hard', shas[key(r)]);
     git(r.dir, 'clean', '-fdq');
   }
+}
+
+export const reviewTemplates = () => ({
+  review: readFileSync(join(HERE, '..', 'review-prompt.md'), 'utf8'),
+  verify: readFileSync(join(HERE, '..', 'verify-prompt.md'), 'utf8'),
+  fix: readFileSync(join(HERE, '..', 'fix-prompt.md'), 'utf8'),
+});
+
+// One agent session, tried on each account in turn while the account is out of usage.
+export function createSession({ envConfig, accounts, env, projectDir, outDir, logsDir, maxTurns, remainingSec }) {
+  return async ({ name, round, model, tools, promptText, outputPath, override, onLimit }) => {
+    writeFileSync(join(outDir, `${name}.prompt.md`), promptText);
+    for (const [i, attempt] of accounts.entries()) {
+      rmSync(outputPath, { force: true });
+      const logFile = join(logsDir, i === 0 ? `${name}.log` : `${name}-${i + 1}.log`);
+      const extra = { ...envConfig, AGENT_OUTPUT_PATH: outputPath, AGENT_REVIEW_ROUND: String(round) };
+      if (attempt.token) extra.CLAUDE_CODE_OAUTH_TOKEN = attempt.token;
+      const r = await runWithTimeout(
+        agentCommand({ model, maxTurns, promptText, addDir: outDir, override, tools }),
+        { cwd: projectDir, timeoutSec: Math.max(1, Math.floor(remainingSec())), logFile, env: agentEnv(env, extra) },
+      );
+      if (r.exitCode === 0 || !detectUsageLimit(readFileSync(logFile, 'utf8'))) {
+        return { timedOut: r.timedOut, text: existsSync(outputPath) ? readFileSync(outputPath, 'utf8') : null };
+      }
+      onLimit?.();
+    }
+    return { limited: true };
+  };
+}
+
+// One review and its verify pass: a fresh session tries to refute each high and medium finding.
+export async function reviewStep({ n, repos, session, model, templates, input, env, outDir, warnings }) {
+  const paths = changedPaths(repos);
+  const reviewPath = join(outDir, `review-${n}.md`);
+  const snaps = snapshot(repos.map((r) => r.dir));
+  const review = await session({
+    name: `review-${n}`, round: n, model, tools: REVIEW_TOOLS, outputPath: reviewPath, override: env.AGENT_REVIEW_CMD,
+    promptText: renderReviewPrompt(templates.review, {
+      round: n, goal: input.goal, skillDir: input.skillDir, planTask: input.planTask, diff: diffText(repos),
+      rules: input.rules, contexts: nearestContext(repos, paths), history: input.history, outputPath: reviewPath,
+    }),
+  });
+  if (enforceReadOnly(snaps).length) warnings.push(`review round ${n}: the reviewer changed the checkout; changes were discarded`);
+  if (review.limited) return { limited: true };
+  if (review.timedOut) return { timedOut: true };
+  const parsed = parseReviewOutput(review.text, paths, changedHunks(repos));
+  if (!parsed.ok) return { error: parsed.error };
+
+  let findings = parsed.findings;
+  const toCheck = findings.filter((f) => f.severity !== 'low');
+  if (toCheck.length) {
+    const verifyPath = join(outDir, `verify-${n}.md`);
+    const verifySnaps = snapshot(repos.map((r) => r.dir));
+    const check = await session({
+      name: `verify-${n}`, round: n, model, tools: REVIEW_TOOLS, outputPath: verifyPath, override: env.AGENT_VERIFY_CMD,
+      promptText: renderVerifyPrompt(templates.verify, {
+        round: n, skillDir: input.skillDir, planTask: input.planTask, diff: diffText(repos), findings: toCheck, outputPath: verifyPath,
+      }),
+    });
+    if (enforceReadOnly(verifySnaps).length) warnings.push(`review round ${n}: the verifier changed the checkout; changes were discarded`);
+    const failed = check.limited || check.timedOut || check.text === null;
+    if (failed) warnings.push(`review round ${n}: verification failed; all findings kept`);
+    findings = applyVerification(findings, parseVerifyReplies(failed ? null : check.text, toCheck.map((f) => f.id)));
+  }
+  return { findings };
 }
 
 export async function runReviewLoop({
@@ -46,32 +114,13 @@ export async function runReviewLoop({
   let exit = null;
   let error = null;
 
-  const reviewTemplate = readFileSync(join(HERE, '..', 'review-prompt.md'), 'utf8');
-  const fixTemplate = readFileSync(join(HERE, '..', 'fix-prompt.md'), 'utf8');
-  const verifyTemplate = readFileSync(join(HERE, '..', 'verify-prompt.md'), 'utf8');
+  const templates = reviewTemplates();
   const goal = planGoal(planText);
   const skillDir = join(outDir, 'review-skill');
   const planTask = planTaskSection(planText, task);
-
-  // One agent session, tried on each account in turn while the account is out of usage.
-  const session = async ({ name, round, model, tools, promptText, outputPath, override, onLimit }) => {
-    writeFileSync(join(outDir, `${name}.prompt.md`), promptText);
-    for (const [i, attempt] of accounts.entries()) {
-      rmSync(outputPath, { force: true });
-      const logFile = join(logsDir, i === 0 ? `${name}.log` : `${name}-${i + 1}.log`);
-      const extra = { ...config.env, AGENT_OUTPUT_PATH: outputPath, AGENT_REVIEW_ROUND: String(round) };
-      if (attempt.token) extra.CLAUDE_CODE_OAUTH_TOKEN = attempt.token;
-      const r = await runWithTimeout(
-        agentCommand({ model, maxTurns: rc.maxTurns, promptText, addDir: outDir, override, tools }),
-        { cwd: projectDir, timeoutSec: Math.max(1, Math.floor(rc.timeout - elapsed())), logFile, env: agentEnv(env, extra) },
-      );
-      if (r.exitCode === 0 || !detectUsageLimit(readFileSync(logFile, 'utf8'))) {
-        return { timedOut: r.timedOut, text: existsSync(outputPath) ? readFileSync(outputPath, 'utf8') : null };
-      }
-      onLimit?.();
-    }
-    return { limited: true };
-  };
+  const session = createSession({
+    envConfig: config.env, accounts, env, projectDir, outDir, logsDir, maxTurns: rc.maxTurns, remainingSec: () => rc.timeout - elapsed(),
+  });
 
   try {
     const rules = readRules(repos, rc.rules);
@@ -83,42 +132,19 @@ export async function runReviewLoop({
     for (let n = 1; !exit; n++) {
       if (n > 1 && !fitsBudget({ elapsedSec: elapsed(), budgetSec: rc.timeout, longestStepSec: longest })) { exit = 'budget'; break; }
       const reviewStart = Date.now();
-      const paths = changedPaths(repos);
-      const reviewPath = join(outDir, `review-${n}.md`);
-      const snaps = snapshot(repos.map((r) => r.dir));
-      const review = await session({
-        name: `review-${n}`, round: n, model: rc.model, tools: REVIEW_TOOLS, outputPath: reviewPath, override: env.AGENT_REVIEW_CMD,
-        promptText: renderReviewPrompt(reviewTemplate, {
-          round: n, goal, skillDir, planTask, diff: diffText(repos), rules, contexts: nearestContext(repos, paths), history: historyText(rounds), outputPath: reviewPath,
-        }),
+      const step = await reviewStep({
+        n, repos, session, model: rc.model, templates, input: { goal, skillDir, planTask, rules, history: historyText(rounds) }, env, outDir, warnings,
       });
-      if (enforceReadOnly(snaps).length) warnings.push(`review round ${n}: the reviewer changed the checkout; changes were discarded`);
-      if (review.limited) { exit = 'usage-limit'; break; }
-      if (review.timedOut) { exit = 'budget'; break; }
-      const parsed = parseReviewOutput(review.text, paths, changedHunks(repos));
-      if (!parsed.ok) { exit = 'reviewer-error'; error = parsed.error; break; }
-
-      // A fresh session tries to refute each high and medium finding before anything is fixed.
-      let findings = parsed.findings;
-      const toCheck = findings.filter((f) => f.severity !== 'low');
-      if (toCheck.length) {
-        const verifyPath = join(outDir, `verify-${n}.md`);
-        const verifySnaps = snapshot(repos.map((r) => r.dir));
-        const check = await session({
-          name: `verify-${n}`, round: n, model: rc.model, tools: REVIEW_TOOLS, outputPath: verifyPath, override: env.AGENT_VERIFY_CMD,
-          promptText: renderVerifyPrompt(verifyTemplate, { round: n, skillDir, planTask, diff: diffText(repos), findings: toCheck, outputPath: verifyPath }),
-        });
-        if (enforceReadOnly(verifySnaps).length) warnings.push(`review round ${n}: the verifier changed the checkout; changes were discarded`);
-        const failed = check.limited || check.timedOut || check.text === null;
-        if (failed) warnings.push(`review round ${n}: verification failed; all findings kept`);
-        findings = applyVerification(findings, parseVerifyReplies(failed ? null : check.text, toCheck.map((f) => f.id)));
-      }
+      if (step.limited) { exit = 'usage-limit'; break; }
+      if (step.timedOut) { exit = 'budget'; break; }
+      if (step.error) { exit = 'reviewer-error'; error = step.error; break; }
+      const { findings } = step;
 
       const round = { n, findings };
       rounds.push(round);
       longest = Math.max(longest, (Date.now() - reviewStart) / 1000);
-      const step = nextStep({ round: n, maxRounds: rc.maxRounds, findings, previous: rounds.at(-2)?.findings ?? null });
-      if (step !== 'fix') { exit = step; round.durationSec = Math.round((Date.now() - reviewStart) / 1000); break; }
+      const next = nextStep({ round: n, maxRounds: rc.maxRounds, findings, previous: rounds.at(-2)?.findings ?? null });
+      if (next !== 'fix') { exit = next; round.durationSec = Math.round((Date.now() - reviewStart) / 1000); break; }
       if (!fitsBudget({ elapsedSec: elapsed(), budgetSec: rc.timeout, longestStepSec: longest })) { exit = 'budget'; break; }
 
       const fixStart = Date.now();
@@ -128,7 +154,7 @@ export async function runReviewLoop({
       const fix = await session({
         name: `fix-${n}`, round: n, model: implementerModel, outputPath: fixPath, override: env.AGENT_FIX_CMD,
         onLimit: () => resetTo(repos, green),
-        promptText: renderFixPrompt(fixTemplate, {
+        promptText: renderFixPrompt(templates.fix, {
           round: n, branch: repos[0].branch, planTask, diff: diffText(repos), findings: toFix, outputPath: fixPath,
           checks: config.checks, protectedPaths: config.protectedPaths, hasSetup: Boolean(config.setup),
         }) + promptSuffix,
