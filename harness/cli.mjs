@@ -9,6 +9,7 @@ import { renderDebugComment } from './lib/debug-comment.mjs';
 import { issueToClose } from './lib/merged.mjs';
 import { loadConfig } from './lib/config.mjs';
 import { selectReview, buildReviewSelection, checkoutPlan } from './lib/pr-review.mjs';
+import { mergeIssueBody, renderReviewBlocked } from './lib/pr-review-format.mjs';
 import { parseGitmodules } from './lib/target.mjs';
 
 const USAGE = `usage:
@@ -30,7 +31,9 @@ const USAGE = `usage:
   cli.mjs review-selection --selection <f> --prs <f> --candidates <f>
   cli.mjs review-checkouts --config <f> --selection <f> --repo <owner/name> --project <dir> --out <dir>
   cli.mjs review-skip-verdict --selection <f>
-  cli.mjs review-fallback-verdict --selection <f>`;
+  cli.mjs review-fallback-verdict --selection <f>
+  cli.mjs render-pr-review --verdict <f> --body <f> --run-url <u>
+  cli.mjs render-review-blocked --verdict <f> --run-url <u>`;
 
 const read = (f) => JSON.parse(readFileSync(f, 'utf8'));
 const print = (obj) => process.stdout.write(`${JSON.stringify(obj, null, 2)}\n`);
@@ -187,6 +190,12 @@ switch (command) {
     break;
   case 'render-debug-comment':
     process.stdout.write(renderDebugComment(read(values.verdict), { runUrl: values['run-url'] }));
+    break;
+  case 'render-pr-review':
+    process.stdout.write(mergeIssueBody(readFileSync(values.body, 'utf8'), read(values.verdict), { runUrl: values['run-url'] }));
+    break;
+  case 'render-review-blocked':
+    process.stdout.write(renderReviewBlocked(read(values.verdict), { runUrl: values['run-url'] }));
     break;
   default:
     console.error(USAGE);
