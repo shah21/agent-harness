@@ -2,7 +2,7 @@
 // task behind a pull request.
 import { parseTaskRef } from './issue.mjs';
 import { parseTaskMarker } from './queue.mjs';
-import { latestTargets } from './target.mjs';
+import { latestTargets, BRANCH_RE } from './target.mjs';
 
 export const REVIEW_MARKER = '<!-- agent-pr-review -->';
 const PR_REF = /^([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#(\d+)$/;
@@ -54,4 +54,54 @@ export function planTaskFor({ pr, prBody, issues = [] }) {
     if (!ref.error) return { plan: ref.plan, task: ref.task, issue: i.number };
   }
   return null;
+}
+
+const SHA = /^[0-9a-f]{40}$/;
+export const MAX_REVIEW_LINES = 50000;
+
+// prData: one `gh pr view` result per requested pull request, in request order; null when unreadable.
+// Head SHAs and base names reach shell steps, so both are checked here.
+export function buildReviewSelection({ selection, prData, candidates = [] }) {
+  if (!selection.issue || selection.skip) return selection;
+  const prs = [];
+  for (const [i, want] of selection.prs.entries()) {
+    const d = prData[i];
+    const name = `${want.repo}#${want.number}`;
+    if (!d) return { ...selection, skip: `pull request not readable: ${name}` };
+    const base = String(d.baseRefName ?? '');
+    if (!SHA.test(String(d.headRefOid)) || !BRANCH_RE.test(base) || base.includes('..') || base.endsWith('.lock')) {
+      return { ...selection, skip: `pull request has an unexpected head or base: ${name}` };
+    }
+    prs.push({
+      ...want, url: d.url ?? null, title: d.title ?? '', body: d.body ?? '', headSha: d.headRefOid, baseRef: base,
+      lines: (d.additions ?? 0) + (d.deletions ?? 0),
+    });
+  }
+  const lines = prs.reduce((n, p) => n + p.lines, 0);
+  if (lines > MAX_REVIEW_LINES) {
+    return { ...selection, prs, skip: `pull requests are too large to review here: ${lines} changed lines (limit ${MAX_REVIEW_LINES})` };
+  }
+  const task = prs.map((p) => planTaskFor({ pr: p, prBody: p.body, issues: candidates })).find(Boolean) ?? null;
+  return { ...selection, prs, task, skip: null };
+}
+
+// Where each pull request is checked out: the consumer root, the target clone, or one of its
+// submodules. Outermost first, so a superproject's submodule update cannot undo a submodule checkout.
+export function checkoutPlan({ selection, consumerRepo, target, submodules = [] }) {
+  const places = [{ repo: consumerRepo, dir: '.', auth: 'consumer' }];
+  if (target) {
+    places.push({ repo: target.repo, dir: target.path, auth: 'target' });
+    for (const s of submodules) places.push({ repo: s.repo, dir: `${target.path}/${s.path}`, auth: 'target' });
+  }
+  const plan = [];
+  for (const pr of selection.prs) {
+    const place = places.find((p) => p.repo.toLowerCase() === pr.repo.toLowerCase());
+    if (!place) return { error: `pull request is not in this repository or its target: ${pr.repo}#${pr.number}` };
+    plan.push({
+      repo: pr.repo, number: pr.number, dir: place.dir, prefix: place.dir === '.' ? '' : `${place.dir}/`, auth: place.auth,
+      headSha: pr.headSha, baseRef: pr.baseRef,
+    });
+  }
+  const depth = (p) => (p.dir === '.' ? 0 : p.dir.split('/').length);
+  return { plan: plan.sort((a, b) => depth(a) - depth(b)) };
 }
