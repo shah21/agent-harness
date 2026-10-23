@@ -169,3 +169,19 @@ test('edits inside the target clone and its submodule are reverted', async () =>
   assert.deepEqual(verdict.investigated.map((i) => i.path), ['.', 'target/packages/core', 'target']);
   assert.match(readFileSync(join(outDir, 'prompt.md'), 'utf8'), /clone of `o\/super`/);
 });
+
+test('a failed install does not block: the run continues with a warning and a static-only prompt', async () => {
+  const { verdict, outDir } = await run({ agent: 'debug-findings.sh', config: { install: 'exit 3' } });
+  assert.equal(verdict.outcome, 'FINDINGS', JSON.stringify(verdict));
+  assert.deepEqual(verdict.warnings, ['install failed (exit 3); dependencies may be missing']);
+  assert.match(readFileSync(join(outDir, 'prompt.md'), 'utf8'), /Dependencies could not be installed: do not rely on running the project; investigate statically\./);
+});
+
+test('a failed setup does not block: the prompt says its services are not running', async () => {
+  const { verdict, outDir } = await run({ agent: 'debug-findings.sh', config: { setup: 'exit 4' } });
+  assert.equal(verdict.outcome, 'FINDINGS', JSON.stringify(verdict));
+  assert.deepEqual(verdict.warnings, ['setup failed (exit 4); its services are not running']);
+  const prompt = readFileSync(join(outDir, 'prompt.md'), 'utf8');
+  assert.match(prompt, /The setup command failed: its services are not running\./);
+  assert.doesNotMatch(prompt, /already running/);
+});

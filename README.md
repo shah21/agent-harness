@@ -104,6 +104,8 @@ Add the job from `templates/agent.yml` (`debug`, which calls `run-debug.yml`) to
 
 Outcomes: `FINDINGS` (verified root cause), `INCONCLUSIVE` (not established, or the agent ran out of time with a partial report), `BLOCKED` (could not investigate; `agent:blocked`, retry by removing it and re-adding `debug`), `WAITING` (usage limit; stays queued). `FINDINGS` and `INCONCLUSIVE` swap `debug` for `agent:debug-done`; the issue is not closed.
 
+A failed or timed-out `install` or `setup` does not block a debug run: the agent still runs, is told it cannot rely on running the project (or on the setup's services), and the comment carries the warning.
+
 Read-only is enforced, not just prompted: after the run, any change to `HEAD`, the branch, or the working tree of the repository or of a target clone (submodules included) is reverted and noted in the comment as `agent modified the checkout; changes were discarded`. The agent's environment holds no GitHub token. As for artifacts, the run artifact (logs, prompt, report) follows the same visibility as the repository.
 
 ## Review loop
