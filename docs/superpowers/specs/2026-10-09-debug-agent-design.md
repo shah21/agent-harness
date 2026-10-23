@@ -45,7 +45,7 @@ Network-free like `run-task.mjs`; GitHub interaction stays in the workflow.
 1. Load config, parse the issue (§2), read the context file.
 2. Probe accounts and pick usable ones — the existing probe, reused as is. All accounts limited → `WAITING`.
 3. Prepare the target clone when `target` is configured (existing code) and check out `ref` if given (§2). The prompt tells the agent the code under investigation lives in the target path, not the consumer root.
-4. `install`, then `setup` if configured. **No baseline checks**: a red base is a possible finding, not a gate.
+4. `install`, then `setup` if configured. **No baseline checks**: a red base is a possible finding, not a gate. A failed or timed-out `install` or `setup` is not a gate either: the run continues with a warning, and the prompt tells the agent to investigate statically (Task 13).
 5. Record `HEAD` and `git status --porcelain` of the consumer and every target clone.
 6. Run the agent with `harness/debug-prompt.md` rendered with: issue number and title, symptom text, context file text, `contextPaths`, report path, and the vendored skill (§6). Tools: `Read,Write,Glob,Grep,Bash` (no `Edit`). `--add-dir` is the output directory, as today.
 7. **Read-only enforcement** (§5).
