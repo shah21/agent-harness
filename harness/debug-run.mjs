@@ -109,14 +109,22 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
 
   const runStep = async (command, logName, timeoutSec, extra = {}) =>
     runWithTimeout(command, { cwd: projectDir, timeoutSec, logFile: join(logsDir, logName), env: quietEnv, ...extra });
+  // A failed install or setup is not a gate for a read-only run: warn, and tell the agent to work statically.
+  const warnings = [];
+  let servicesNote = '';
   const install = await runStep(config.install, 'install.log', config.timeouts.install);
   if (install.timedOut || install.exitCode !== 0) {
-    return finish(blocked('harness', install.timedOut ? 'install timed out' : `install failed (exit ${install.exitCode})`));
+    warnings.push(`${install.timedOut ? 'install timed out' : `install failed (exit ${install.exitCode})`}; dependencies may be missing`);
+    servicesNote += ' Dependencies could not be installed: do not rely on running the project; investigate statically.';
   }
+  let servicesUp = false;
   if (config.setup) {
     const setup = await runStep(config.setup, 'setup.log', config.timeouts.setup, { killGroupOnExit: false });
     if (setup.timedOut || setup.exitCode !== 0) {
-      return finish(blocked('harness', setup.timedOut ? 'setup timed out' : `setup failed (exit ${setup.exitCode})`));
+      warnings.push(`${setup.timedOut ? 'setup timed out' : `setup failed (exit ${setup.exitCode})`}; its services are not running`);
+      servicesNote += ' The setup command failed: its services are not running.';
+    } else {
+      servicesUp = true;
     }
   }
 
@@ -132,7 +140,7 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
     ISSUE_TITLE: issue.title,
     TARGET_SECTION: targetSection,
     REPORT_PATH: reportPath,
-    SERVICES_RULE: servicesRule(Boolean(config.setup)),
+    SERVICES_RULE: servicesRule(servicesUp) + servicesNote,
     SKILL: readFileSync(join(HERE, 'debug', 'systematic-debugging', 'SKILL.md'), 'utf8').replace(/^---[\s\S]*?---\n/, ''),
     CONTEXT_PATHS: config.debug.contextPaths.length ? config.debug.contextPaths.map((p) => `\`${p}\``).join(', ') : '(none configured)',
     SYMPTOM: parsed.symptom,
@@ -142,7 +150,6 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
   const promptFile = join(outDir, 'prompt.md');
   writeFileSync(promptFile, promptText);
 
-  const warnings = [];
   let agent;
   for (const [i, attempt] of accounts.entries()) {
     rmSync(reportPath, { force: true });
