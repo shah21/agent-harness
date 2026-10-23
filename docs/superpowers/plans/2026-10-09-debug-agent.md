@@ -2242,3 +2242,105 @@ Done by hand after Tasks 1–11 are merged and the release tag the consumer's wo
 - [ ] **Step 3:** Confirm the issue ends with `agent:debug-done` (or `agent:blocked` with a readable reason), one comment ending in `<!-- agent-debug -->`, and `git status` clean in the run artifact's logs.
 - [ ] **Step 4:** If the consumer uses a `target`, add `TARGET_READ_TOKEN`, open an issue with `ref: <a tag or branch of the target>`, and confirm the comment's **Investigated** section lists the target at the expected commit.
 - [ ] **Step 5:** Write down anything surprising (timeout too short, context too large, tool denied) as an issue in this repository.
+
+## Task 13: fix: a failed install or setup does not block a debug run
+
+A debug run is read-only and does not need the project to build: a red base is a possible finding, not a gate (spec §4), and a failed `install` or `setup` is the same. Today either one ends the run as `BLOCKED (harness)` before the agent starts — for example an old tag whose `engines` field rejects the runner's Node version. Instead the run continues with a warning, and the prompt tells the agent to investigate statically.
+
+**Files:**
+- Modify: `harness/debug-run.mjs`
+- Modify: `README.md`
+- Test: `test/debug-pipeline.test.mjs` (append)
+
+**Interfaces:**
+- Consumes: `servicesRule(hasSetup)` (`harness/lib/agent.mjs`), `runStep` and `warnings` in `runDebug` (`harness/debug-run.mjs`).
+- Produces: warnings, verbatim: `install failed (exit N); dependencies may be missing`, `install timed out; dependencies may be missing`, `setup failed (exit N); its services are not running`, `setup timed out; its services are not running`. `BLOCKED (harness)` for install or setup no longer occurs in debug runs. Implementation runs (`run-task.mjs`) are unchanged.
+
+- [ ] **Step 1: Write the failing tests** — append to `test/debug-pipeline.test.mjs`:
+
+```js
+test('a failed install does not block: the run continues with a warning and a static-only prompt', async () => {
+  const { verdict, outDir } = await run({ agent: 'debug-findings.sh', config: { install: 'exit 3' } });
+  assert.equal(verdict.outcome, 'FINDINGS', JSON.stringify(verdict));
+  assert.deepEqual(verdict.warnings, ['install failed (exit 3); dependencies may be missing']);
+  assert.match(readFileSync(join(outDir, 'prompt.md'), 'utf8'), /Dependencies could not be installed: do not rely on running the project; investigate statically\./);
+});
+
+test('a failed setup does not block: the prompt says its services are not running', async () => {
+  const { verdict, outDir } = await run({ agent: 'debug-findings.sh', config: { setup: 'exit 4' } });
+  assert.equal(verdict.outcome, 'FINDINGS', JSON.stringify(verdict));
+  assert.deepEqual(verdict.warnings, ['setup failed (exit 4); its services are not running']);
+  const prompt = readFileSync(join(outDir, 'prompt.md'), 'utf8');
+  assert.match(prompt, /The setup command failed: its services are not running\./);
+  assert.doesNotMatch(prompt, /already running/);
+});
+```
+
+- [ ] **Step 2: Run them to verify they fail**
+
+Run: `node --test test/debug-pipeline.test.mjs`
+Expected: the two new cases FAIL (`outcome` is `BLOCKED`); every existing case passes.
+
+- [ ] **Step 3: Edit `harness/debug-run.mjs`** — replace the install and setup block:
+
+```js
+  const install = await runStep(config.install, 'install.log', config.timeouts.install);
+  if (install.timedOut || install.exitCode !== 0) {
+    return finish(blocked('harness', install.timedOut ? 'install timed out' : `install failed (exit ${install.exitCode})`));
+  }
+  if (config.setup) {
+    const setup = await runStep(config.setup, 'setup.log', config.timeouts.setup, { killGroupOnExit: false });
+    if (setup.timedOut || setup.exitCode !== 0) {
+      return finish(blocked('harness', setup.timedOut ? 'setup timed out' : `setup failed (exit ${setup.exitCode})`));
+    }
+  }
+```
+
+with:
+
+```js
+  // A failed install or setup is not a gate for a read-only run: warn, and tell the agent to work statically.
+  const warnings = [];
+  let servicesNote = '';
+  const install = await runStep(config.install, 'install.log', config.timeouts.install);
+  if (install.timedOut || install.exitCode !== 0) {
+    warnings.push(`${install.timedOut ? 'install timed out' : `install failed (exit ${install.exitCode})`}; dependencies may be missing`);
+    servicesNote += ' Dependencies could not be installed: do not rely on running the project; investigate statically.';
+  }
+  let servicesUp = false;
+  if (config.setup) {
+    const setup = await runStep(config.setup, 'setup.log', config.timeouts.setup, { killGroupOnExit: false });
+    if (setup.timedOut || setup.exitCode !== 0) {
+      warnings.push(`${setup.timedOut ? 'setup timed out' : `setup failed (exit ${setup.exitCode})`}; its services are not running`);
+      servicesNote += ' The setup command failed: its services are not running.';
+    } else {
+      servicesUp = true;
+    }
+  }
+```
+
+In the `renderPrompt` call, change `SERVICES_RULE: servicesRule(Boolean(config.setup)),` to:
+
+```js
+    SERVICES_RULE: servicesRule(servicesUp) + servicesNote,
+```
+
+Delete the later `const warnings = [];` (the line before `let agent;`); the loop and the report handling keep pushing to the same array.
+
+- [ ] **Step 4: Run the tests — expect PASS**
+
+Run: `node --test test/debug-pipeline.test.mjs` → all PASS. Then `npm test` → all PASS.
+Mutation check (then revert): restore `return finish(blocked('harness', …))` for install → the install case fails.
+
+- [ ] **Step 5: Edit `README.md`** — in `## Debug runs`, after the paragraph starting `Outcomes:`, add:
+
+```markdown
+A failed or timed-out `install` or `setup` does not block a debug run: the agent still runs, is told it cannot rely on running the project (or on the setup's services), and the comment carries the warning.
+```
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add harness/debug-run.mjs README.md test/debug-pipeline.test.mjs
+git commit -m "fix: a failed install or setup does not block a debug run"
+```
