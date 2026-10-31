@@ -1,0 +1,39 @@
+name: runner
+
+# The public runner repository's only workflow. It starts on the schedule or when the owner
+# runs it by hand, and on nothing else: no issues, pull requests or pushes. Replace OWNER and
+# keep harness_ref equal to the @ref in `uses:` below.
+run-name: run
+
+on:
+  workflow_dispatch:
+  # Hourly at :30, 16:30-02:30 UTC (move it to your night). Public repositories get free
+  # minutes, but a scheduled run still takes a runner for a few seconds.
+  schedule:
+    - cron: '30 16-23,0-2 * * *'
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  runner:
+    # `continue` starts the next round with the workflow's own token, whose actor is the Actions bot.
+    if: github.event_name == 'schedule' || github.actor == github.repository_owner || github.actor == 'github-actions[bot]'
+    uses: OWNER/agent-harness/.github/workflows/run-shared.yml@v1
+    with:
+      harness_repo: OWNER/agent-harness
+      harness_ref: v1
+      caller_workflow: runner.yml
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      CLAUDE_CODE_OAUTH_TOKEN_2: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_2 }}
+      RUNNER_TOKENS: ${{ secrets.RUNNER_TOKENS }}
+      RUN_KEY: ${{ secrets.RUN_KEY }}
+      STORE_REPO: ${{ secrets.STORE_REPO }}
+      STORE_TOKEN: ${{ secrets.STORE_TOKEN }}
+      PUBLISH_PUBLIC_KEY: ${{ secrets.PUBLISH_PUBLIC_KEY }}
+      PUBLISH_PRIVATE_KEY: ${{ secrets.PUBLISH_PRIVATE_KEY }}
+      SLOT_KEY_0: ${{ secrets.SLOT_KEY_0 }}
+      SLOT_KEY_1: ${{ secrets.SLOT_KEY_1 }}
+      SLOT_KEY_2: ${{ secrets.SLOT_KEY_2 }}

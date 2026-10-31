@@ -79,6 +79,10 @@ Each changed repository gets a **draft** PR with the same branch name; submodule
 
 The run job holds `TARGET_READ_TOKEN` during one clone step (masked, never written to disk, never in the agent's environment); prefer a read-only token there.
 
+## Shared runner
+
+To run the harness for many private projects from one public repository, at no hosted-runner cost, see `docs/shared-runner.md`.
+
 ## Debug runs
 
 A `debug` label queues a **read-only investigation** instead of an implementation. The agent follows a systematic-debugging method (adapted from the superpowers skill of the same name), cannot change the checkout, and answers with one comment on the issue: restated problem, reproduction status, evidence, ranked hypotheses tagged `CONFIRMED`, `INFERENCE` or `UNKNOWN`, root cause or honest unknowns, and what human input would settle it. Nothing is committed, pushed or opened as a PR.
