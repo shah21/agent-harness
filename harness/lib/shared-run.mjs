@@ -14,8 +14,10 @@ const targetRef = (selection) => selection.targets?.superBranch ?? selection.tar
 // that used to close it does not run in a project that has moved to the runner.
 async function closeMergedTargets({ project, data, client, tokenMap, probe, fetchImpl }) {
   const closed = [];
-  for (const t of targetsToCheck(data.ready)) {
-    const list = tokenMap[project.targetTokenOwner ?? t.repo.split('/')[0]];
+  if (!project.target) return closed;
+  const listed = new Set([project.target.repo, ...project.target.allow]);
+  for (const t of targetsToCheck(data.ready).filter((x) => listed.has(x.repo))) {
+    const list = tokenMap[project.target.tokenOwner];
     const r = list ? await resolveToken({ repo: t.repo, tokens: list, needsWrite: false, probe }) : null;
     if (!r) continue;
     if (await githubClient({ token: list[r.index], fetchImpl }).prMerged(t.repo, t.number)) {
@@ -88,11 +90,21 @@ export async function runSharedSelect({ projectsText, tokensText, outDir, fetchI
     try {
       const t = c.data.configText ? loadConfig(c.data.configText).target : null;
       if (t) {
-        const owner = c.project.targetTokenOwner ?? t.repo.split('/')[0];
-        const list = tokenMap[owner];
-        const r = list ? await resolveToken({ repo: t.repo, tokens: list, needsWrite: true, probe }) : null;
-        const base = { repo: t.repo, path: t.path, ref: targetRef(c.selection) };
-        target = r ? { ...base, tokenOwner: owner, tokenIndex: r.index, tokenKind: r.kind } : { ...base, error: 'no usable token' };
+        // The project's own config may only choose the target the owner listed. It never names a
+        // repository to clone, and an unlisted one is not even probed.
+        const listed = c.project.target;
+        if (!listed || t.repo !== listed.repo) {
+          target = { error: 'target not allowed' };
+        } else {
+          const list = tokenMap[listed.tokenOwner];
+          const r = list ? await resolveToken({ repo: t.repo, tokens: list, needsWrite: true, probe }) : null;
+          target = r
+            ? {
+              repo: t.repo, path: t.path, ref: targetRef(c.selection), tokenOwner: listed.tokenOwner, tokenIndex: r.index, tokenKind: r.kind,
+              allow: listed.allow, branchTemplate: t.branch, branchPrefixes: listed.branchPrefixes,
+            }
+            : { error: 'no usable token' };
+        }
       }
     } catch {
       // an invalid config is reported by the run itself

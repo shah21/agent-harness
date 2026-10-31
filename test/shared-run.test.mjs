@@ -53,22 +53,41 @@ test('a project no token can reach is skipped and counted, with nothing printed 
   assert.deepEqual(printed, []);
 });
 
-test('a configured target gets its own token entry; an unreachable one records an error', async () => {
-  const config = cfg({ target: { repo: 'org/code', path: 'target' } });
+test('a listed target gets its own token entry, with the allow-list and template the guard and clone need', async () => {
+  const config = cfg({ target: { repo: 'org/code', path: 'target', branch: '{type}/{slug}' } });
   const { fetchImpl } = makeFetch([
     ...repoHandlers('alice/one', { issues: [gi(1, 1)], config }),
     { method: 'GET', match: /\/repos\/org\/code$/, reply: (url, init) => (init.headers.authorization === 'Bearer ghp_org' ? { body: { permissions: { pull: true, push: true } } } : { status: 404, body: {} }) },
   ]);
-  const projectsText = JSON.stringify({ projects: [{ repo: 'alice/one', targetTokenOwner: 'org' }] });
+  const projectsText = JSON.stringify({ projects: [{ repo: 'alice/one', target: { repo: 'org/code', allow: ['org/sub-a'] } }] });
   const dir = out();
   await runSharedSelect({ projectsText, tokensText: JSON.stringify({ alice: ['ghp_ok'], org: ['ghp_org'] }), outDir: dir, fetchImpl, now: NOW });
   const [ok] = JSON.parse(readFileSync(join(dir, 'selections.json'), 'utf8'));
-  assert.deepEqual(ok.target, { repo: 'org/code', path: 'target', ref: '', tokenOwner: 'org', tokenIndex: 0, tokenKind: 'classic' });
+  assert.deepEqual(ok.target, {
+    repo: 'org/code', path: 'target', ref: '', tokenOwner: 'org', tokenIndex: 0, tokenKind: 'classic',
+    allow: ['org/sub-a'], branchTemplate: '{type}/{slug}', branchPrefixes: [],
+  });
 
   const dir2 = out();
   await runSharedSelect({ projectsText, tokensText: JSON.stringify({ alice: ['ghp_ok'], org: ['ghp_wrong'] }), outDir: dir2, fetchImpl, now: NOW });
   const [bad] = JSON.parse(readFileSync(join(dir2, 'selections.json'), 'utf8'));
-  assert.deepEqual(bad.target, { repo: 'org/code', path: 'target', ref: '', error: 'no usable token' });
+  assert.deepEqual(bad.target, { error: 'no usable token' });
+});
+
+test('a target the project config names but the owner did not list is refused and never touched (confused deputy)', async () => {
+  const evil = cfg({ target: { repo: 'victim/private', path: 'target' } });
+  const { fetchImpl, calls } = makeFetch([
+    ...repoHandlers('alice/one', { issues: [gi(1, 1)], config: evil }),
+    { method: 'GET', match: /\/repos\/victim\/private/, reply: { body: { permissions: { pull: true, push: true } } } },
+  ]);
+  const tokensText = JSON.stringify({ alice: ['ghp_ok'], victim: ['ghp_ok'] });
+  for (const listed of [undefined, { repo: 'org/code' }]) {
+    const dir = out();
+    await runSharedSelect({ projectsText: JSON.stringify({ projects: [{ repo: 'alice/one', ...(listed ? { target: listed } : {}) }] }), tokensText, outDir: dir, fetchImpl, now: NOW });
+    const [e] = JSON.parse(readFileSync(join(dir, 'selections.json'), 'utf8'));
+    assert.deepEqual(e.target, { error: 'target not allowed' });
+  }
+  assert.ok(!calls.some((c) => /victim\/private/.test(c.url)), 'the unlisted repository was never probed');
 });
 
 test('a crashed run is released and its stacked task waits behind it', async () => {
@@ -123,7 +142,19 @@ test('an issue whose target pull request merged is closed (the runner replaces t
     { method: 'GET', match: /\/repos\/org\/code$/, reply: { body: { permissions: { pull: true, push: false } } } },
     { method: 'GET', match: /\/repos\/org\/code\/pulls\/7$/, reply: { body: { merged: true } } },
   ]);
-  await runSharedSelect({ projectsText: JSON.stringify({ projects: [{ repo: 'alice/one', targetTokenOwner: 'org' }] }), tokensText: JSON.stringify({ alice: ['ghp_ok'], org: ['ghp_org'] }), outDir: out(), fetchImpl, now: NOW });
+  await runSharedSelect({ projectsText: JSON.stringify({ projects: [{ repo: 'alice/one', target: { repo: 'org/code' } }] }), tokensText: JSON.stringify({ alice: ['ghp_ok'], org: ['ghp_org'] }), outDir: out(), fetchImpl, now: NOW });
   const closed = calls.find((c) => c.method === 'PATCH' && /issues\/5$/.test(c.url));
   assert.deepEqual(closed.body, { state: 'closed', state_reason: 'completed' });
+});
+
+test('merge checks only follow pull requests in repositories the owner listed', async () => {
+  const readyBody = (repo) => `\u2705 **READY_FOR_QA**\n\n${targetsMarker([{ repo, number: 7, branch: 'agent/issue-5', base: 'main', role: 'super' }])}`;
+  const { fetchImpl, calls } = makeFetch([
+    ...repoHandlers('alice/one', { issues: [gi(5, 1, ['agent:ready'])] }),
+    { method: 'GET', match: /\/repos\/alice\/one\/issues\/5\/comments/, reply: { body: [{ body: readyBody('victim/private') }] } },
+    { method: 'GET', match: /\/repos\/victim\/private/, reply: { body: { merged: true, permissions: { pull: true, push: true } } } },
+  ]);
+  await runSharedSelect({ projectsText: JSON.stringify({ projects: [{ repo: 'alice/one', target: { repo: 'org/code' } }] }), tokensText: JSON.stringify({ alice: ['ghp_ok'], org: ['ghp_org'], victim: ['ghp_ok'] }), outDir: out(), fetchImpl, now: NOW });
+  assert.ok(!calls.some((c) => /victim\/private/.test(c.url)));
+  assert.ok(!calls.some((c) => c.method === 'PATCH' && /issues\/5$/.test(c.url)));
 });
