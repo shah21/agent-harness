@@ -82,6 +82,20 @@ Illustrative shape only (placeholders, not real names):
 
 **Residual exposure** (accepted): that a run happened, when, and for how long; the encrypted artifact's size.
 
+### 6.1 What project code in the run job can reach (open decision)
+
+The run job executes code the harness does not control: the agent has a shell, and the project's own install and check commands run its dependencies. A step-scoped `env:` keeps a secret out of other steps' environment variables, but every secret a job references is loaded into the runner process when the job starts, and hosted runners give the job root. So code in the run job can read every secret that job references and print it in a form masking does not catch.
+
+As built, the run job references the token lists of every owner (to clone) and the encryption key (to open the selection and seal the output). A malicious dependency in one project could therefore expose every owner's tokens and decrypt the artifacts of the round. Earlier, one project's run job held only that project's read token, in a private repository's log. This is the one place the design is weaker than what it replaces, and it matters most for classic tokens, which reach every private repository their owner can reach.
+
+Options, strongest first:
+
+1. **Per-project isolation.** A separate clone job (no untrusted code) holds the tokens, clones, and seals the checkout to a public key generated inside that project's run job. The run job holds only its own private key and the Claude token, and seals its output to the publish job's public key. A compromised run job exposes only its own project and the Claude token, which the harness already accepts.
+2. **Tokens out of the run job, one shared key.** The same clone job, but the run job holds one symmetric key. Tokens are safe; a compromised run job can still decrypt other projects' artifacts of the same round (up to 3 days). Isolate the most sensitive project by running it alone in its round.
+3. **Keep the most sensitive project off the shared runner.**
+
+Until one of these is built, do not put a sensitive project on the shared runner.
+
 ## 7. Changes to the harness
 
 1. `select` across repositories, reading the project list from a private source.
