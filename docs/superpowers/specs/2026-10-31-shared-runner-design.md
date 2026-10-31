@@ -16,7 +16,7 @@ Public repositories get free hosted-runner minutes; private ones draw from a quo
 |---|---|
 | What may be public? | Metadata only: a run exists, its time and duration. Everything else is hidden or encrypted. |
 | How does work reach the runner? | A scheduled poll across the projects, plus a manual `workflow_dispatch` to start one now. No workflow in the project repositories. |
-| Credentials | Fine-grained personal access tokens, one per repository owner, each limited to the named repositories. |
+| Credentials | Classic personal access tokens (the existing practice), one per repository owner. A classic token cannot be limited to named repositories: it reaches every repository its owner can reach (see section 9). |
 | Run output retention | Encrypted, 3 days. A trimmed record is kept in a private store for good. |
 | Where does the project list live? | A file in a private repository, fetched at run time. Never committed to a public repository. |
 | Parallelism | Up to 3 projects at once, at most one task per project. A project's own queue stays serial. |
@@ -107,7 +107,7 @@ No project-specific names or conventions enter the harness. The harness stays st
 
 - **Cron timing.** Scheduled workflows start late under load, and GitHub disables scheduled workflows in a public repository after 60 days without a commit (from memory; verify). The manual start is the fallback, and a keep-alive commit may be needed.
 - **Matrix values and job names.** Confirm that nothing from a matrix reaches a public page except the index.
-- **Token scopes.** Confirm the exact fine-grained token permissions for read, push, PR and issue writes, and whether an organisation requires approval for tokens that reach its repositories.
+- **Classic tokens are broad.** A classic `repo`-scoped token reaches every private repository its owner can reach, including organisation repositories after SSO authorisation. If the runner's secrets were ever exposed, the damage would span all of them, not just the listed projects. Mitigations: one token per owner, never one for everything; an expiry on each; rotation as a routine; no token ever in the agent's environment (unchanged); the owner-only gate. Fine-grained tokens would narrow this for personally owned projects and can replace the classic one per owner later, with no design change. Also confirm that the organisation's token policy lets a classic token through (SSO authorisation), and the minimum scopes needed (`repo`, and nothing wider).
 - **Encryption tool.** Symmetric `gpg` ships on hosted runners and is integrity-protected; confirm before choosing it over `age`.
 - **Key compromise.** One key protects 3 days of ciphertext. Rotating it is a secret change, and takes effect for new runs only.
 - **Public-repository abuse.** Anyone can open issues or pull requests in the runner repository. No workflow reacts to them, but this should be proven by test.
