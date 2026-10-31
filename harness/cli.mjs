@@ -11,6 +11,7 @@ import { loadConfig } from './lib/config.mjs';
 import { selectReview, buildReviewSelection, checkoutPlan } from './lib/pr-review.mjs';
 import { mergeIssueBody, renderReviewBlocked } from './lib/pr-review-format.mjs';
 import { parseGitmodules } from './lib/target.mjs';
+import { encryptDir, decryptToDir } from './lib/crypt.mjs';
 
 const USAGE = `usage:
   cli.mjs select --issues <f> --prs <f> --default-branch <b> [--ready <f>]
@@ -33,7 +34,10 @@ const USAGE = `usage:
   cli.mjs review-skip-verdict --selection <f>
   cli.mjs review-fallback-verdict --selection <f>
   cli.mjs render-pr-review --verdict <f> --body <f> --run-url <u>
-  cli.mjs render-review-blocked --verdict <f> --run-url <u>`;
+  cli.mjs render-review-blocked --verdict <f> --run-url <u>
+  cli.mjs shared-entry --selections <f> --index <n> --out <dir>
+  cli.mjs encrypt --dir <d> --out <f>        (key in env RUN_KEY)
+  cli.mjs decrypt --in <f> --dir <d>         (key in env RUN_KEY)`;
 
 const read = (f) => JSON.parse(readFileSync(f, 'utf8'));
 const print = (obj) => process.stdout.write(`${JSON.stringify(obj, null, 2)}\n`);
@@ -74,6 +78,7 @@ try {
       'run-url': { type: 'string' }, 'pr-url': { type: 'string' },
       ready: { type: 'string' }, config: { type: 'string' }, out: { type: 'string' }, 'target-prs': { type: 'string' },
       candidates: { type: 'string' }, repo: { type: 'string' }, project: { type: 'string' }, body: { type: 'string' },
+      selections: { type: 'string' }, index: { type: 'string' }, dir: { type: 'string' }, in: { type: 'string' },
     },
   }));
 } catch (e) {
@@ -196,6 +201,29 @@ switch (command) {
     break;
   case 'render-review-blocked':
     process.stdout.write(renderReviewBlocked(read(values.verdict), { runUrl: values['run-url'] }));
+    break;
+  case 'shared-entry': {
+    const entry = read(values.selections)[Number(values.index)];
+    if (!entry) {
+      console.error('no such selection');
+      process.exit(1);
+    }
+    mkdirSync(values.out, { recursive: true });
+    writeFileSync(join(values.out, 'entry.json'), `${JSON.stringify(entry, null, 2)}\n`);
+    writeFileSync(join(values.out, 'selection.json'), `${JSON.stringify(entry.selection, null, 2)}\n`);
+    writeFileSync(join(values.out, 'issue.json'), `${JSON.stringify(entry.selection.issue, null, 2)}\n`);
+    process.stdout.write(`skipped=${entry.selection.skip ? 'true' : 'false'}\nbase=${entry.selection.base}\ndefault=${entry.defaultBranch}\nissue=${entry.selection.issue.number}\n`);
+    break;
+  }
+  case 'encrypt':
+  case 'decrypt':
+    try {
+      if (command === 'encrypt') await encryptDir(values.dir, values.out, process.env.RUN_KEY);
+      else await decryptToDir(values.in, values.dir, process.env.RUN_KEY);
+    } catch (e) {
+      console.error(e.message);
+      process.exit(1);
+    }
     break;
   default:
     console.error(USAGE);
