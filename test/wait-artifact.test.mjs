@@ -20,7 +20,7 @@ case "$*" in
   *"/zip"*) cat "${stateDir}/artifact.zip" ;;
   *"artifacts?name="*)
     n=$(cat "${stateDir}/count" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "${stateDir}/count"
-    if [ "$n" -ge "\${STUB_AFTER:-1}" ]; then echo 4242; fi ;;
+    if [ "$n" -ge "\${STUB_AFTER:-1}" ]; then echo "\${STUB_IDS:-4242}"; fi ;;
 esac
 `);
   chmodSync(join(bin, 'gh'), 0o755);
@@ -37,11 +37,11 @@ const run = ({ state, bin }, args, env = {}) => {
   const out = join(state, 'out.bin');
   const r = spawnSync('bash', [SCRIPT, ...args(out)], {
     encoding: 'utf8',
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, GH_TOKEN: 'tok', GITHUB_REPOSITORY: 'runner/repo', GITHUB_RUN_ID: '777', SLOT_KEY, WAIT_INTERVAL: '0.1', ...env },
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, GH_TOKEN: 'tok', GITHUB_REPOSITORY: 'runner/repo', GITHUB_RUN_ID: '777', GITHUB_RUN_ATTEMPT: '2', SLOT_KEY, WAIT_INTERVAL: '0.1', ...env },
   });
   return { ...r, out, calls: existsSync(join(state, 'calls.log')) ? readFileSync(join(state, 'calls.log'), 'utf8') : '' };
 };
-const tagOf = (label) => spawnSync('node', [CLI, 'tag', '--run-id', '777', '--label', label], { encoding: 'utf8', env: { ...process.env, SLOT_KEY } }).stdout.trim();
+const tagOf = (label) => spawnSync('node', [CLI, 'tag', '--run-id', '777-2', '--label', label], { encoding: 'utf8', env: { ...process.env, SLOT_KEY } }).stdout.trim();
 
 test('waits for the artifact named by this slot\'s tag, downloads it and prints nothing', { skip: !haveZip }, () => {
   const s = setup();
@@ -88,4 +88,20 @@ test('missing configuration fails before any request', () => {
   const r = run(s, (out) => ['pub', out, '5'], { SLOT_KEY: '' });
   assert.equal(r.status, 1);
   assert.equal(r.calls, '');
+});
+
+test('the tag includes the attempt, so a re-run cannot pick up what an earlier attempt left behind (review M1)', { skip: !haveZip }, () => {
+  const s = setup();
+  const r = run(s, (out) => ['pub', out, '30']);
+  assert.ok(r.calls.includes(`name=pub-${tagOf('pub')}`));
+  const first = spawnSync('node', [CLI, 'tag', '--run-id', '777-1', '--label', 'pub'], { encoding: 'utf8', env: { ...process.env, SLOT_KEY } }).stdout.trim();
+  assert.notEqual(first, tagOf('pub'));
+});
+
+test('more than one artifact under the name is refused: a handoff has exactly one author', { skip: !haveZip }, () => {
+  const s = setup();
+  const r = run(s, (out) => ['pub', out, '30'], { STUB_IDS: '4242 4343' });
+  assert.equal(r.status, 1);
+  assert.equal(r.stderr, 'handoff was ambiguous\n');
+  assert.ok(!existsSync(r.out));
 });

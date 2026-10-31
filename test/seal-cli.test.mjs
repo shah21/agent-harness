@@ -98,3 +98,27 @@ test('tag prints the 24 hex name derived from SLOT_KEY, and never the key', () =
   assert.equal(bad.status, 1);
   assert.ok(!/zzkey/.test(bad.stderr + bad.stdout));
 });
+
+test('proof prints a 64 hex HMAC and proof-check accepts exactly that, including the hash of a data file', () => {
+  const env = { SLOT_KEY: 'a-long-enough-slot-secret-0001' };
+  const dir = tmp();
+  const data = join(dir, 'entry.json');
+  writeFileSync(data, '{"a":1}');
+  const args = ['--run-id', '777-1', '--slot', '0', '--label', 'bundle'];
+  const p = run(['proof', ...args, '--data-file', data], env);
+  assert.equal(p.status, 0, p.stderr);
+  assert.match(p.stdout, /^[0-9a-f]{64}\n$/);
+  const proofFile = join(dir, 'p');
+  writeFileSync(proofFile, p.stdout);
+  const check = (extra, e = env) => run(['proof-check', ...extra, '--proof-file', proofFile], e).status;
+  assert.equal(check([...args, '--data-file', data]), 0);
+  assert.equal(check(['--run-id', '777-2', '--slot', '0', '--label', 'bundle', '--data-file', data]), 1, 'another attempt');
+  assert.equal(check(['--run-id', '777-1', '--slot', '1', '--label', 'bundle', '--data-file', data]), 1, 'another slot');
+  assert.equal(check([...args]), 1, 'without the data');
+  writeFileSync(data, '{"a":2}');
+  assert.equal(check([...args, '--data-file', data]), 1, 'changed data');
+  assert.equal(check([...args, '--data-file', data], { SLOT_KEY: 'another-long-enough-secret-0002' }), 1, 'another secret');
+  const bad = run(['proof-check', ...args, '--proof-file', proofFile], { SLOT_KEY: 'zzkey' });
+  assert.equal(bad.status, 1);
+  assert.ok(!/zzkey/.test(bad.stdout + bad.stderr));
+});

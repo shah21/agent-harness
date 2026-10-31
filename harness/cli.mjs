@@ -12,8 +12,9 @@ import { selectReview, buildReviewSelection, checkoutPlan } from './lib/pr-revie
 import { mergeIssueBody, renderReviewBlocked } from './lib/pr-review-format.mjs';
 import { parseGitmodules } from './lib/target.mjs';
 import {
-  encryptDir, decryptToDir, sealDir, openSealed, generateKeypair, tagFor, CryptError,
+  encryptDir, decryptToDir, sealDir, openSealed, generateKeypair, tagFor, proofFor, verifyProof, CryptError,
 } from './lib/crypt.mjs';
+import { createHash } from 'node:crypto';
 import { parseBlocklist, scanDir, scanText } from './lib/leak.mjs';
 import { guardVerdict } from './lib/verdict-guard.mjs';
 import { renderSharedWorkflow } from './lib/shared-workflow.mjs';
@@ -52,7 +53,9 @@ const USAGE = `usage:
   cli.mjs keygen --out <dir>                  (writes public.key and private.key)
   cli.mjs seal --dir <d> --out <f> [--key-file <f>] [--aad <s>] [--allow-links]   (key in env SEAL_PUBLIC_KEY)
   cli.mjs open --in <f> --dir <d> [--key-file <f>] [--aad <s>] [--allow-links]    (key in env OPEN_PRIVATE_KEY)
-  cli.mjs tag --run-id <id> --label <l>       (secret in env SLOT_KEY)`;
+  cli.mjs tag --run-id <id> --label <l>       (secret in env SLOT_KEY)
+  cli.mjs proof --run-id <id> --slot <n> --label <l> [--data-file <f>]        (secret in env SLOT_KEY)
+  cli.mjs proof-check --run-id <id> --slot <n> --label <l> [--data-file <f>] --proof-file <f>`;
 
 const read = (f) => JSON.parse(readFileSync(f, 'utf8'));
 const print = (obj) => process.stdout.write(`${JSON.stringify(obj, null, 2)}\n`);
@@ -94,7 +97,7 @@ try {
       ready: { type: 'string' }, config: { type: 'string' }, out: { type: 'string' }, 'target-prs': { type: 'string' },
       candidates: { type: 'string' }, repo: { type: 'string' }, project: { type: 'string' }, body: { type: 'string' },
       selections: { type: 'string' }, index: { type: 'string' }, dir: { type: 'string' }, in: { type: 'string' },
-      'repo-dir': { type: 'string' }, gitmodules: { type: 'string' }, entry: { type: 'string' }, 'bundle-dir': { type: 'string' }, 'key-file': { type: 'string' }, 'allow-links': { type: 'boolean' }, label: { type: 'string' }, 'run-id': { type: 'string' },
+      slot: { type: 'string' }, 'data-file': { type: 'string' }, 'proof-file': { type: 'string' }, 'repo-dir': { type: 'string' }, gitmodules: { type: 'string' }, entry: { type: 'string' }, 'bundle-dir': { type: 'string' }, 'key-file': { type: 'string' }, 'allow-links': { type: 'boolean' }, label: { type: 'string' }, 'run-id': { type: 'string' },
       aad: { type: 'string' }, blocklist: { type: 'string' }, root: { type: 'string', multiple: true }, file: { type: 'string', multiple: true },
     },
   }));
@@ -303,6 +306,21 @@ switch (command) {
       else await openSealed(values.in, values.dir, key, opts);
     } catch (e) {
       console.error(e instanceof CryptError ? e.message : `${command === 'seal' ? 'encryption' : 'decryption'} failed`);
+      process.exit(1);
+    }
+    break;
+  case 'proof':
+  case 'proof-check':
+    try {
+      const data = values['data-file'] ? createHash('sha256').update(readFileSync(values['data-file'])).digest('hex') : 'none';
+      const parts = [values['run-id'], values.slot, values.label, data];
+      if (command === 'proof') {
+        process.stdout.write(`${proofFor(process.env.SLOT_KEY, ...parts)}\n`);
+      } else if (!verifyProof(process.env.SLOT_KEY, readFileSync(values['proof-file'], 'utf8').trim(), ...parts)) {
+        process.exit(1);
+      }
+    } catch (e) {
+      console.error(e instanceof CryptError ? e.message : 'proof failed');
       process.exit(1);
     }
     break;

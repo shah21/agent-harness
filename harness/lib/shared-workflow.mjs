@@ -3,7 +3,8 @@
 // file with this output, and another pins which secrets each job may reference.
 //
 // In the template, [[ expr ]] becomes an Actions expression and @K@ the slot index. Bash uses
-// $VAR, never the braced form, so nothing here collides with a JavaScript template literal.
+// $VAR, never the braced form, so nothing here collides with a JavaScript template literal;
+// where a braced expansion is unavoidable it is written \${...}.
 export const SLOTS = 3;
 
 const HEADER = `name: agent-run-shared
@@ -117,13 +118,13 @@ jobs:
         if: steps.select.outputs.count != '0'
         env:
           RUN_KEY: [[ secrets.RUN_KEY ]]
-        run: node .harness/harness/cli.mjs encrypt --dir "$RUNNER_TEMP/sel" --out "$RUNNER_TEMP/selection.enc" --aad "$GITHUB_RUN_ID"
+        run: node .harness/harness/cli.mjs encrypt --dir "$RUNNER_TEMP/sel" --out "$RUNNER_TEMP/selection.enc" --aad "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
 
       - name: Upload the selection
         if: steps.select.outputs.count != '0'
         uses: actions/upload-artifact@v4
         with:
-          name: selection
+          name: selection-[[ github.run_attempt ]]
           path: [[ runner.temp ]]/selection.enc
           retention-days: 1
 `;
@@ -154,7 +155,7 @@ const SLOT = `
       - name: Download the selection
         uses: actions/download-artifact@v4
         with:
-          name: selection
+          name: selection-[[ github.run_attempt ]]
           path: [[ runner.temp ]]/enc
 
       - name: Open the selection
@@ -162,7 +163,7 @@ const SLOT = `
         env:
           RUN_KEY: [[ secrets.RUN_KEY ]]
         run: |
-          node .harness/harness/cli.mjs decrypt --in "$RUNNER_TEMP/enc/selection.enc" --dir "$RUNNER_TEMP/sel" --aad "$GITHUB_RUN_ID"
+          node .harness/harness/cli.mjs decrypt --in "$RUNNER_TEMP/enc/selection.enc" --dir "$RUNNER_TEMP/sel" --aad "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           mkdir -p "$RUNNER_TEMP/bundle"
           node .harness/harness/cli.mjs shared-entry --selections "$RUNNER_TEMP/sel/selections.json" --index @K@ --out "$RUNNER_TEMP/bundle" >> "$GITHUB_OUTPUT"
 
@@ -177,7 +178,7 @@ const SLOT = `
         id: names
         env:
           SLOT_KEY: [[ secrets.SLOT_KEY_@K@ ]]
-        run: echo "bundle=$(node .harness/harness/cli.mjs tag --run-id "$GITHUB_RUN_ID" --label bundle)" >> "$GITHUB_OUTPUT"
+        run: echo "bundle=$(node .harness/harness/cli.mjs tag --run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --label bundle)" >> "$GITHUB_OUTPUT"
 
       - name: Wait for the run job's public key
         timeout-minutes: 30
@@ -186,8 +187,23 @@ const SLOT = `
           GH_TOKEN: [[ github.token ]]
         run: bash .harness/harness/wait-artifact.sh pub "$RUNNER_TEMP/run.pub" 1700
 
-      - name: Seal the bundle to that key
-        run: node .harness/harness/cli.mjs seal --dir "$RUNNER_TEMP/bundle" --out "$RUNNER_TEMP/bundle.sealed" --key-file "$RUNNER_TEMP/run.pub" --aad "$GITHUB_RUN_ID:@K@" --allow-links
+      # A name is only secret until the artifact exists, so the key is accepted only with a proof
+      # that a holder of this slot's key made it.
+      - name: Check the run job's public key
+        env:
+          SLOT_KEY: [[ secrets.SLOT_KEY_@K@ ]]
+        run: |
+          [ "$(wc -l < "$RUNNER_TEMP/run.pub" | tr -d ' ')" = 2 ] || { echo "handoff rejected"; exit 1; }
+          head -n 1 "$RUNNER_TEMP/run.pub" > "$RUNNER_TEMP/run.key"
+          tail -n 1 "$RUNNER_TEMP/run.pub" > "$RUNNER_TEMP/run.pub.proof"
+          node .harness/harness/cli.mjs proof-check --run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --slot @K@ --label pub --data-file "$RUNNER_TEMP/run.key" --proof-file "$RUNNER_TEMP/run.pub.proof" || { echo "handoff rejected"; exit 1; }
+
+      - name: Sign the bundle and seal it to that key
+        env:
+          SLOT_KEY: [[ secrets.SLOT_KEY_@K@ ]]
+        run: |
+          node .harness/harness/cli.mjs proof --run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --slot @K@ --label bundle --data-file "$RUNNER_TEMP/bundle/entry.json" > "$RUNNER_TEMP/bundle/slot.proof"
+          node .harness/harness/cli.mjs seal --dir "$RUNNER_TEMP/bundle" --out "$RUNNER_TEMP/bundle.sealed" --key-file "$RUNNER_TEMP/run.key" --aad "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT:@K@" --allow-links
 
       - name: Upload the bundle
         uses: actions/upload-artifact@v4
@@ -218,31 +234,39 @@ const SLOT = `
         with:
           node-version: [[ inputs.node_version ]]
 
+      - name: Names
+        id: names
+        env:
+          SLOT_KEY: [[ secrets.SLOT_KEY_@K@ ]]
+        run: |
+          echo "pub=$(node .harness/harness/cli.mjs tag --run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --label pub)" >> "$GITHUB_OUTPUT"
+          echo "out=$(node .harness/harness/cli.mjs tag --run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --label out)" >> "$GITHUB_OUTPUT"
+
+      # The private key exists in this job only and is never uploaded. The public key goes up
+      # first, signed with the slot key, before anything slow runs.
+      - name: Make a key pair for this job and sign the public key
+        env:
+          SLOT_KEY: [[ secrets.SLOT_KEY_@K@ ]]
+        run: |
+          node .harness/harness/cli.mjs keygen --out "$RUNNER_TEMP/keys"
+          {
+            cat "$RUNNER_TEMP/keys/public.key"
+            node .harness/harness/cli.mjs proof --run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --slot @K@ --label pub --data-file "$RUNNER_TEMP/keys/public.key"
+          } > "$RUNNER_TEMP/pub.txt"
+
+      - name: Publish the public key
+        uses: actions/upload-artifact@v4
+        with:
+          name: pub-[[ steps.names.outputs.pub ]]
+          path: [[ runner.temp ]]/pub.txt
+          retention-days: 1
+
       - name: Install tooling
         env:
           CLAUDE_CODE_VERSION: [[ inputs.claude_code_version ]]
         run: |
           corepack enable
           npm install -g "@anthropic-ai/claude-code@$CLAUDE_CODE_VERSION"
-
-      - name: Names
-        id: names
-        env:
-          SLOT_KEY: [[ secrets.SLOT_KEY_@K@ ]]
-        run: |
-          echo "pub=$(node .harness/harness/cli.mjs tag --run-id "$GITHUB_RUN_ID" --label pub)" >> "$GITHUB_OUTPUT"
-          echo "out=$(node .harness/harness/cli.mjs tag --run-id "$GITHUB_RUN_ID" --label out)" >> "$GITHUB_OUTPUT"
-
-      # The private key exists in this job only and is never uploaded.
-      - name: Make a key pair for this job
-        run: node .harness/harness/cli.mjs keygen --out "$RUNNER_TEMP/keys"
-
-      - name: Publish the public key
-        uses: actions/upload-artifact@v4
-        with:
-          name: pub-[[ steps.names.outputs.pub ]]
-          path: [[ runner.temp ]]/keys/public.key
-          retention-days: 1
 
       - name: Wait for the bundle
         timeout-minutes: 30
@@ -253,9 +277,13 @@ const SLOT = `
 
       - name: Open the bundle
         id: entry
+        env:
+          SLOT_KEY: [[ secrets.SLOT_KEY_@K@ ]]
         run: |
-          node .harness/harness/cli.mjs open --in "$RUNNER_TEMP/bundle.sealed" --dir "$RUNNER_TEMP/open" --key-file "$RUNNER_TEMP/keys/private.key" --aad "$GITHUB_RUN_ID:@K@" --allow-links
+          node .harness/harness/cli.mjs open --in "$RUNNER_TEMP/bundle.sealed" --dir "$RUNNER_TEMP/open" --key-file "$RUNNER_TEMP/keys/private.key" --aad "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT:@K@" --allow-links
           rm -f "$RUNNER_TEMP/keys/private.key"
+          # Anyone can seal to our public key; only the clone job of this slot can sign.
+          node .harness/harness/cli.mjs proof-check --run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --slot @K@ --label bundle --data-file "$RUNNER_TEMP/open/entry.json" --proof-file "$RUNNER_TEMP/open/slot.proof" || { echo "bundle rejected"; exit 1; }
           mkdir -p "$RUNNER_TEMP/agent"
           for f in entry.json selection.json issue.json target-checkout.txt; do
             if [ -f "$RUNNER_TEMP/open/$f" ]; then mv "$RUNNER_TEMP/open/$f" "$RUNNER_TEMP/agent/$f"; fi
@@ -317,9 +345,13 @@ const SLOT = `
         if: always()
         env:
           SEAL_PUBLIC_KEY: [[ secrets.PUBLISH_PUBLIC_KEY ]]
+          SLOT_KEY: [[ secrets.SLOT_KEY_@K@ ]]
         run: |
           find "$RUNNER_TEMP/agent" -type l -delete
-          node .harness/harness/cli.mjs seal --dir "$RUNNER_TEMP/agent" --out "$RUNNER_TEMP/run-output.sealed" --aad "$GITHUB_RUN_ID:@K@"
+          verdict="$RUNNER_TEMP/agent/verdict.json"
+          [ -f "$verdict" ] || verdict=""
+          node .harness/harness/cli.mjs proof --run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --slot @K@ --label out \${verdict:+--data-file "$verdict"} > "$RUNNER_TEMP/agent/slot.proof"
+          node .harness/harness/cli.mjs seal --dir "$RUNNER_TEMP/agent" --out "$RUNNER_TEMP/run-output.sealed" --aad "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT:@K@"
 
       - name: Upload the sealed output
         if: always()
@@ -355,14 +387,14 @@ const SLOT = `
       - name: Download the selection
         uses: actions/download-artifact@v4
         with:
-          name: selection
+          name: selection-[[ github.run_attempt ]]
           path: [[ runner.temp ]]/enc
 
       - name: Open the selection
         env:
           RUN_KEY: [[ secrets.RUN_KEY ]]
         run: |
-          node .harness/harness/cli.mjs decrypt --in "$RUNNER_TEMP/enc/selection.enc" --dir "$RUNNER_TEMP/sel" --aad "$GITHUB_RUN_ID"
+          node .harness/harness/cli.mjs decrypt --in "$RUNNER_TEMP/enc/selection.enc" --dir "$RUNNER_TEMP/sel" --aad "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           node .harness/harness/cli.mjs shared-entry --selections "$RUNNER_TEMP/sel/selections.json" --index @K@ --out "$RUNNER_TEMP/selection-files" >/dev/null
 
       # The output is checked twice: it opens only with the publish key, and only this slot's
@@ -375,7 +407,15 @@ const SLOT = `
         run: |
           mkdir -p "$RUNNER_TEMP/agent"
           if bash .harness/harness/wait-artifact.sh out "$RUNNER_TEMP/run-output.sealed" 0; then
-            node .harness/harness/cli.mjs open --in "$RUNNER_TEMP/run-output.sealed" --dir "$RUNNER_TEMP/agent" --aad "$GITHUB_RUN_ID:@K@" || echo "run output could not be opened"
+            node .harness/harness/cli.mjs open --in "$RUNNER_TEMP/run-output.sealed" --dir "$RUNNER_TEMP/agent" --aad "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT:@K@" || echo "run output could not be opened"
+            # Anyone can seal to the public publish key; only a holder of this slot's key can sign.
+            verdict="$RUNNER_TEMP/agent/verdict.json"
+            [ -f "$verdict" ] || verdict=""
+            if ! { [ -f "$RUNNER_TEMP/agent/slot.proof" ] && node .harness/harness/cli.mjs proof-check --run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --slot @K@ --label out \${verdict:+--data-file "$verdict"} --proof-file "$RUNNER_TEMP/agent/slot.proof"; }; then
+              rm -rf "$RUNNER_TEMP/agent"
+              mkdir -p "$RUNNER_TEMP/agent"
+              echo "run output rejected"
+            fi
           else
             echo "no run output"
           fi

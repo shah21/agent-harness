@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, linkSync, lstatSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { generateKeypair, sealDir, openSealed, tagFor, assertSafeNames, CryptError } from '../harness/lib/crypt.mjs';
+import { generateKeypair, sealDir, openSealed, tagFor, proofFor, verifyProof, assertSafeNames, CryptError } from '../harness/lib/crypt.mjs';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'seal-'));
 function fixture() {
@@ -125,4 +125,28 @@ test('tagFor: a stable, secret-keyed name that cannot be computed without the se
   assert.throws(() => tagFor(secret, '', 'pub'), CryptError);
   assert.throws(() => tagFor(secret, '777', 'bad label!'), CryptError);
   assert.ok(!existsSync('/nonexistent'));
+});
+
+test('a proof is an HMAC over its parts: any part changed, or another secret, and it no longer verifies', () => {
+  const secret = 'a-long-enough-slot-secret-0001';
+  const proof = proofFor(secret, '777-1', '0', 'bundle', 'abc123');
+  assert.match(proof, /^[0-9a-f]{64}$/);
+  assert.equal(proofFor(secret, '777-1', '0', 'bundle', 'abc123'), proof);
+  assert.equal(verifyProof(secret, proof, '777-1', '0', 'bundle', 'abc123'), true);
+  for (const parts of [['777-2', '0', 'bundle', 'abc123'], ['777-1', '1', 'bundle', 'abc123'], ['777-1', '0', 'out', 'abc123'], ['777-1', '0', 'bundle', 'abc124'], ['777-1', '0', 'bundle']]) {
+    assert.equal(verifyProof(secret, proof, ...parts), false, JSON.stringify(parts));
+  }
+  assert.equal(verifyProof('another-long-enough-secret-0002', proof, '777-1', '0', 'bundle', 'abc123'), false);
+  for (const bad of ['', 'zz', proof.slice(1), `${proof}0`, proof.toUpperCase(), null, undefined, 7]) {
+    assert.equal(verifyProof(secret, bad, '777-1', '0', 'bundle', 'abc123'), false, String(bad));
+  }
+});
+
+test('proof parts are plain tokens, so no part can run into the next; the secret must be long enough', () => {
+  const secret = 'a-long-enough-slot-secret-0001';
+  assert.throws(() => proofFor(secret, '1', 'a\nb'), CryptError);
+  assert.throws(() => proofFor(secret, '1', 'a:b'), CryptError);
+  assert.throws(() => proofFor(secret, '1', ''), CryptError);
+  assert.throws(() => proofFor('zzkey', '1', 'x'), (e) => e instanceof CryptError && !/zzkey/.test(e.message));
+  assert.notEqual(proofFor(secret, 'ab', 'c'), proofFor(secret, 'a', 'bc'), 'the parts cannot run into each other');
 });

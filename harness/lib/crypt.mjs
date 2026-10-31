@@ -8,7 +8,7 @@
 //                               but not open, which is what a job that runs untrusted code needs.
 import {
   createCipheriv, createDecipheriv, createHmac, createPrivateKey, createPublicKey, diffieHellman,
-  generateKeyPairSync, hkdfSync, randomBytes, scryptSync,
+  generateKeyPairSync, hkdfSync, randomBytes, scryptSync, timingSafeEqual,
 } from 'node:crypto';
 import {
   appendFileSync, closeSync, createReadStream, createWriteStream, lstatSync, mkdirSync, mkdtempSync,
@@ -227,4 +227,30 @@ export function tagFor(secret, runId, label) {
   requireSecret(secret);
   if (!/^[A-Za-z0-9_.-]+$/.test(String(runId)) || !/^[a-z][a-z0-9-]*$/.test(String(label))) throw new CryptError('invalid tag input');
   return createHmac('sha256', secret).update(`${runId}:${label}`).digest('hex').slice(0, 24);
+}
+
+// --- proof that a handoff came from a holder of the slot key ------------------------------------
+//
+// An artifact name only protects a handoff until the artifact exists: any job of the run can
+// delete an artifact and upload another under the same name. So the content proves its origin
+// too: an HMAC under the slot key over the run and attempt, the slot, what it is and (when it
+// applies) a hash of the data it vouches for. A job of another slot cannot compute it.
+
+const PART = /^[A-Za-z0-9_.-]+$/;
+
+export function proofFor(secret, ...parts) {
+  requireSecret(secret);
+  if (parts.length === 0 || parts.some((p) => !PART.test(String(p)))) throw new CryptError('invalid proof input');
+  return createHmac('sha256', secret).update(parts.join('\n')).digest('hex');
+}
+
+export function verifyProof(secret, proof, ...parts) {
+  if (typeof proof !== 'string' || !/^[0-9a-f]{64}$/.test(proof)) return false;
+  let expected;
+  try {
+    expected = proofFor(secret, ...parts);
+  } catch {
+    return false;
+  }
+  return timingSafeEqual(Buffer.from(proof), Buffer.from(expected));
 }

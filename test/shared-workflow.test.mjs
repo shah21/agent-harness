@@ -92,7 +92,8 @@ test('the slots are identical apart from their index', () => {
     .replace(new RegExp(`\\b(clone|run|publish) ${k}\\b`, 'g'), '$1 K')
     .replace(new RegExp(`count\\) > ${k}\\b`, 'g'), 'count) > K')
     .replace(new RegExp(`--index ${k}\\b`, 'g'), '--index K')
-    .replace(new RegExp(`GITHUB_RUN_ID:${k}"`, 'g'), 'GITHUB_RUN_ID:K"');
+    .replace(new RegExp(`--slot ${k}\\b`, 'g'), '--slot K')
+    .replace(new RegExp(`GITHUB_RUN_ATTEMPT:${k}"`, 'g'), 'GITHUB_RUN_ATTEMPT:K"');
   assert.equal(norm(1), norm(0));
   assert.equal(norm(2), norm(0));
   assert.ok(norm(0).includes('SLOT_KEY_K') && norm(0).includes('CLAUDE_CODE_OAUTH_TOKEN_2'), 'the shared secrets are left alone');
@@ -103,7 +104,7 @@ test('the run job meets its clone job through names only the slot can compute, a
     const run = jobs[`run_${k}`];
     assert.match(run, /cli\.mjs keygen --out "\$RUNNER_TEMP\/keys"/);
     assert.match(run, /name: pub-\$\{\{ steps\.names\.outputs\.pub \}\}/);
-    assert.match(run, /path: \$\{\{ runner\.temp \}\}\/keys\/public\.key/);
+    assert.match(run, /path: \$\{\{ runner\.temp \}\}\/pub\.txt/);
     assert.ok(!/path: .*private\.key/.test(run), 'the private key is never uploaded');
     const clone = jobs[`clone_${k}`];
     assert.match(clone, /wait-artifact\.sh pub /);
@@ -137,7 +138,7 @@ test('handoff artifacts live one day; the output, which only the owner can open,
     assert.equal(retention(`clone_${k}`, 'bundle'), '1');
     assert.equal(retention(`run_${k}`, 'out'), '3');
   }
-  assert.match(jobs.select, /name: selection\n\s+path: .*\n\s+retention-days: 1/);
+  assert.match(jobs.select, /name: selection-\$\{\{ github\.run_attempt \}\}\n\s+path: .*\n\s+retention-days: 1/);
 });
 
 test('publish decides from its own verified output and passes the verdict through the guard (review focus 4)', () => {
@@ -174,4 +175,46 @@ test('the caller passes every secret the workflow declares', () => {
   const declared = [...wf.slice(0, wf.indexOf('\njobs:')).matchAll(/^      ([A-Z][A-Z0-9_]+):$/gm)].map((m) => m[1]);
   assert.ok(declared.length >= 10, `declared ${declared.length}`);
   for (const name of declared) assert.match(caller, new RegExp(`${name}: \\$\\{\\{ secrets\\.${name} \\}\\}`), name);
+});
+
+test('everything is bound to the run attempt: aad, names and proofs use run id and attempt together', () => {
+  assert.ok(!/--aad "\$GITHUB_RUN_ID"/.test(wf) && !/--aad "\$GITHUB_RUN_ID:/.test(wf), 'no bare run id');
+  assert.ok(!/--run-id "\$GITHUB_RUN_ID"/.test(wf));
+  const aads = [...wf.matchAll(/--aad "([^"]+)"/g)].map((m) => m[1]);
+  assert.ok(aads.length >= 19);
+  for (const a of aads) assert.match(a, /^\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT(:\d)?$/, a);
+  for (const name of ['clone', 'run', 'publish']) assert.match(jobs[`${name}_0`], /selection-\$\{\{ github\.run_attempt \}\}|--run-id "\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT"|--aad/);
+  for (let k = 0; k < SLOTS; k++) {
+    for (const part of ['clone', 'publish']) assert.match(jobs[`${part}_${k}`], /name: selection-\$\{\{ github\.run_attempt \}\}/);
+  }
+});
+
+test('the run job publishes its public key, with a proof, before it installs anything slow (shrinks the forgery window)', () => {
+  for (let k = 0; k < SLOTS; k++) {
+    const run = jobs[`run_${k}`];
+    const pub = run.indexOf('name: pub-');
+    assert.ok(pub > 0 && pub < run.indexOf('Install tooling'), 'the public key goes up first');
+    assert.ok(run.includes(`cli.mjs proof --run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --slot ${k} --label pub --data-file`), 'the public key is signed with this slot\'s key');
+  }
+});
+
+test('every handoff is authenticated by content, not only by name: pub, bundle and out each carry a slot proof that is checked before use (review C2)', () => {
+  for (let k = 0; k < SLOTS; k++) {
+    const clone = jobs[`clone_${k}`];
+    const run = jobs[`run_${k}`];
+    const publish = jobs[`publish_${k}`];
+    // clone checks the public key's proof before it seals anything to it, and signs the bundle
+    assert.ok(clone.indexOf('cli.mjs proof-check --run-id') > 0 && clone.indexOf('--label pub') > 0);
+    assert.ok(clone.indexOf('proof-check') < clone.indexOf('cli.mjs seal '), 'verify, then seal');
+    assert.match(clone, /cli\.mjs proof --run-id[^\n]*--label bundle/);
+    assert.ok(clone.indexOf('--label bundle') < clone.indexOf('cli.mjs seal '), 'the bundle proof is inside the sealed bundle');
+    // run checks the bundle's proof before it runs anything, and signs its output
+    assert.ok(run.indexOf('proof-check') > 0 && run.indexOf('--label bundle') > 0);
+    assert.ok(run.indexOf('proof-check') < run.indexOf('Run task'), 'verify the bundle before running it');
+    assert.match(run, /cli\.mjs proof --run-id[^\n]*--label out/);
+    assert.ok(run.lastIndexOf('--label out') < run.indexOf('cli.mjs seal --dir "$RUNNER_TEMP/agent"'), 'the output proof is inside the sealed output');
+    // publish checks the output's proof before it trusts anything in it
+    assert.ok(publish.indexOf('proof-check') > 0 && publish.indexOf('--label out') > 0);
+    assert.ok(publish.indexOf('proof-check') < publish.indexOf('guard-verdict'), 'verify the output before the guard reads it');
+  }
 });

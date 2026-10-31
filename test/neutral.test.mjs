@@ -71,3 +71,7 @@ test('slot-keyed tags may name artifacts, but no other step output may', () => {
   ].join('\n');
   assert.deepEqual(lintNeutralNames(y).map((v) => v.line), [6, 7]);
 });
+
+test('the run attempt may appear in an artifact name', () => {
+  assert.deepEqual(lintNeutralNames('          name: selection-${{ github.run_attempt }}'), []);
+});
