@@ -82,19 +82,36 @@ Illustrative shape only (placeholders, not real names):
 
 **Residual exposure** (accepted): that a run happened, when, and for how long; the encrypted artifact's size.
 
-### 6.1 What project code in the run job can reach (open decision)
+### 6.1 Isolating the run job (decided: per-project isolation)
 
-The run job executes code the harness does not control: the agent has a shell, and the project's own install and check commands run its dependencies. A step-scoped `env:` keeps a secret out of other steps' environment variables, but every secret a job references is loaded into the runner process when the job starts, and hosted runners give the job root. So code in the run job can read every secret that job references and print it in a form masking does not catch.
+The run job executes code the harness does not control: the agent has a shell, and the project's install and check commands run its dependencies. Every secret a job references is loaded into the runner process when the job starts, and hosted runners give the job root, so anything the run job references can be read and printed in a form masking misses. The run job therefore references **no repository token and no key that opens another project**.
 
-As built, the run job references the token lists of every owner (to clone) and the encryption key (to open the selection and seal the output). A malicious dependency in one project could therefore expose every owner's tokens and decrypt the artifacts of the round. Earlier, one project's run job held only that project's read token, in a private repository's log. This is the one place the design is weaker than what it replaces, and it matters most for classic tokens, which reach every private repository their owner can reach.
+**Trust tiers.** *Trusted* jobs run only harness code: `select`, `clone`, `publish`. *Untrusted* jobs run project code: `run`. Each slot (0 to 2, so at most 3 projects at once) is a separate reusable-workflow call with its own `SLOT_KEY_k` secret, so a slot's jobs can only reference their own slot key.
 
-Options, strongest first:
+| Job | References | Never references |
+|---|---|---|
+| select, clone, publish (trusted) | `RUNNER_TOKENS`, `RUN_KEY`, store secrets, `PUBLISH_PRIVATE_KEY` (publish only), the slot key | |
+| run (untrusted) | the Claude tokens, its own slot key, `PUBLISH_PUBLIC_KEY` (public) | `RUNNER_TOKENS`, `RUN_KEY`, store secrets, `PUBLISH_PRIVATE_KEY` |
 
-1. **Per-project isolation.** A separate clone job (no untrusted code) holds the tokens, clones, and seals the checkout to a public key generated inside that project's run job. The run job holds only its own private key and the Claude token, and seals its output to the publish job's public key. A compromised run job exposes only its own project and the Claude token, which the harness already accepts.
-2. **Tokens out of the run job, one shared key.** The same clone job, but the run job holds one symmetric key. Tokens are safe; a compromised run job can still decrypt other projects' artifacts of the same round (up to 3 days). Isolate the most sensitive project by running it alone in its round.
-3. **Keep the most sensitive project off the shared runner.**
+**Flow per slot.**
+1. `run` generates an ephemeral X25519 key pair in its own VM and uploads the public key as artifact `pub-<tag>`. The private key never leaves the job.
+2. `clone` waits for `pub-<tag>`, clones the project (and target) with the resolved tokens, and seals the checkout plus the selection entry to that public key as `bundle-<tag>`.
+3. `run` opens the bundle with its private key, runs the agent and checks, and seals its output to the publish job's public key as `out-<tag>`. It holds no key that can open any output.
+4. `publish` opens the output with `PUBLISH_PRIVATE_KEY`, passes the verdict through the verdict guard, and writes to the private project.
 
-Until one of these is built, do not put a sensitive project on the shared runner.
+`<tag>` is `HMAC-SHA256(SLOT_KEY_k, run id : label)`, so an artifact name can be computed only by this slot's jobs. A compromised run job in another slot cannot pre-create a forged `pub`, `bundle` or `out` for this slot, so it cannot substitute its own public key or its own verdict.
+
+**Guards against a compromised run job steering the trusted jobs.**
+- *Verdict guard.* Publish never trusts the run's verdict for anything that reaches git or `gh`: `issue`, `branch`, `baseBranch`, `task` come from the trusted selection; target repositories must be in the owner's allow-list; target branches must equal the branch recomputed from the project's template; bundle names must be plain file names; base SHAs must be 40 hex characters. Anything else turns the verdict into a BLOCKED one.
+- *Allow-list for targets and submodules.* The project list (private, owner-controlled) names each project's target repository and the submodule repositories allowed. The project's own `agent.config.json` and `.gitmodules` can only select from that list, so anyone with write access to a project cannot make the runner clone another private repository.
+- *Safe unpacking.* Archives from the run are checked for absolute paths and `..`, extracted without ownership or permissions, and refused if they contain links or special files.
+- *Fixed messages.* Nothing that can carry project text is printed.
+
+**Accepted residual risks.**
+- The run job holds the Claude token(s), as the harness always has. A compromised run can burn that usage or print the token. Rotate it if a run is ever suspect.
+- The run job holds its slot key. If a slot's run is compromised, rotate that slot's key: until then, project code running in another slot of a later round could race to forge that slot's artifact names.
+- A compromised run can produce a wrong but well-formed verdict for its own project (for example claim READY_FOR_QA). Its pull request is still reviewed by a person, as always.
+- The run job can read its own project's code and the plain-text output it produces. That is what it is for.
 
 ## 7. Changes to the harness
 
@@ -124,7 +141,7 @@ No project-specific names or conventions enter the harness. The harness stays st
 - **Silent fallback.** Falling back from a fine-grained to a classic token could hide a misconfigured fine-grained token, and quietly widen access. The private record notes which kind each run used so this is visible.
 - **Classic tokens are broad.** A classic `repo`-scoped token reaches every private repository its owner can reach, including organisation repositories after SSO authorisation. If the runner's secrets were ever exposed, the damage would span all of them, not just the listed projects. Mitigations: one token per owner, never one for everything; an expiry on each; rotation as a routine; no token ever in the agent's environment (unchanged); the owner-only gate. Fine-grained tokens would narrow this for personally owned projects and can replace the classic one per owner later, with no design change. Also confirm that the organisation's token policy lets a classic token through (SSO authorisation), and the minimum scopes needed (`repo`, and nothing wider).
 - **Encryption tool (settled).** `node:crypto` AES-256-GCM with a scrypt-derived key, authenticated, no extra tooling, tested locally. The auth tag is checked before anything is unpacked. `gpg` and `age` are not used.
-- **Key compromise.** One key protects 3 days of ciphertext. Rotating it is a secret change, and takes effect for new runs only.
+- **Key compromise.** `RUN_KEY` is only ever referenced by trusted jobs. `PUBLISH_PRIVATE_KEY` only by publish. Rotating either is a secret change and takes effect for new runs only.
 - **Public-repository abuse.** Anyone can open issues or pull requests in the runner repository. No workflow reacts to them, but this should be proven by test.
 - **History.** Anything already published in a public repository stays in clones and forks. Fixing the past is separate from this design.
 - **Harness private.** If the harness itself became private, public callers could not use its reusable workflows. This design assumes the harness stays public.

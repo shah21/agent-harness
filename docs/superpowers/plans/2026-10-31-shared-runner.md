@@ -2328,3 +2328,17 @@ git commit -m "docs: record shared runner dry run"
 - **Placeholder scan:** none; every code step has the code.
 - **Type consistency:** `entry` fields (`index`, `repo`, `tokenOwner`, `tokenIndex`, `tokenKind`, `defaultBranch`, `selection`, `target`) are written in Task 4 and read in Tasks 5, 7 and 8; `target` keys (`repo`, `path`, `ref`, `tokenOwner`, `tokenIndex`, `tokenKind`, `error`) match between Task 4's test and `shared-clone.sh`; `githubClient` method names match between Tasks 3, 4 and 7.
 - **Known limits:** a project's `agent.config.json` is read from its default branch at select time; a project with no usable token is skipped silently (counted, not named); the `permissions` probe depends on the Task 0 finding.
+
+
+---
+
+## Part 2: isolating the run job (added after the whole-branch review, finding C1)
+
+Design: spec section 6.1. The matrix workflow of Task 8 is replaced by three slot calls. Tasks 9-14 below are built test-first; the exact code is in the commits.
+
+- **Task 9: hybrid sealing.** `harness/lib/crypt.mjs`: `generateKeypair()`, `sealDir(dir, outFile, publicKey, { aad })`, `openSealed(file, dir, privateKey, { aad })` (X25519, HKDF-SHA256, AES-256-GCM, tag checked before unpacking), `tagFor(secret, runId, label)` (HMAC-SHA256, 24 hex), safe unpacking (names checked, no links or special files). CLI: `keygen`, `seal`, `open`, `tag`.
+- **Task 10: verdict guard.** `harness/lib/verdict-guard.mjs` and CLI `guard-verdict`: the trusted entry is authoritative for `issue`, `branch`, `baseBranch`, `task`; targets are limited to the allow-list, branch recomputed from the template, bundle names plain, `baseSha` 40 hex; anything else becomes a BLOCKED verdict.
+- **Task 11: allow-lists in the project list.** `projects.mjs`: `target: { repo, tokenOwner, allow: [repos] }` replaces `targetTokenOwner`; `maxParallel` 1 to 3. `shared-run.mjs`: the config's target must equal the listed one, otherwise the entry carries an error.
+- **Task 12: clone and bundle.** `harness/shared-clone.sh`: protocol hardening, `.gitmodules` parsed before git acts and every submodule at every depth checked against the allow-list; the entry for the run is written into the checkout directory.
+- **Task 13: slot workflows.** `.github/workflows/run-slot.yml` (clone, run, publish), `run-shared.yml` (select, three slot calls, continue), `harness/wait-artifact.sh`; lints that pin which secrets each job may reference, permissions, neutral names and env values.
+- **Task 14: docs, a second independent security review, dry run.** The dry run on scratch repositories remains required before any real project is added.
