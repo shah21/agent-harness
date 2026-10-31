@@ -40,9 +40,10 @@ Each project keeps its `agent.config.json`, its plans and its task issues in its
 
 ### 4.1 Flow
 
-1. **select** (scheduled or manual). Reads the project list from the private store. For each project it lists the `agent`-labelled issues, keeps the existing order (plan, then task, with stacking) and picks the first runnable task. At most 3 projects are chosen. Selection is written to an **encrypted** artifact; the matrix handed to the next job holds only indices.
-2. **run** (one parallel job per chosen project, read-only). Clones the project with that owner's read token, runs the gate, the agent, the harness's own re-verification and the optional review, exactly as today. After the agent has finished it **encrypts the whole output directory** and uploads it with 3-day retention. The agent step never sees the encryption key.
-3. **publish** (write access). Decrypts, then posts the READY or BLOCKED comment and opens the PR in the **private** project repository, updates labels, closes issues whose PRs merged, and pushes a trimmed record to the private store.
+1. **select** (scheduled or manual, trusted). Reads the project list from the private store. For each project it lists the `agent`-labelled issues, keeps the existing order (plan, then task, with stacking), reads the plan heading through the API to learn the task title, and picks the first runnable task. At most 3 projects are chosen, one per slot. The selection is sealed with `RUN_KEY` for the trusted jobs.
+2. **clone** (one per chosen project, trusted). Opens its entry, clones the project and its target with the resolved tokens, initialises only allow-listed submodules, waits for the run job's public key and seals the checkout to it.
+3. **run** (one per chosen project, untrusted). Makes a key pair in its own VM, publishes the public key, opens its bundle, runs the gate, the agent, the harness's own re-verification and the optional review exactly as today, and seals its output to the publish key. It holds no repository token and no key that opens another project (section 6.1).
+4. **publish** (one per chosen project, trusted). Opens the output, passes the verdict through the verdict guard, posts the READY or BLOCKED comment and opens the PR in the **private** project repository, updates labels, and pushes a trimmed record to the private store.
 
 ### 4.2 Project list
 
@@ -51,19 +52,25 @@ Illustrative shape only (placeholders, not real names):
 ```json
 {
   "projects": [
-    { "repo": "owner/project-a", "tokenOwner": "owner" },
-    { "repo": "org/project-b", "tokenOwner": "org", "target": true }
-  ]
+    { "repo": "owner/project-a" },
+    {
+      "repo": "owner/project-b",
+      "target": { "repo": "org/code", "allow": ["org/sub-a", "org/sub-b"], "branchPrefixes": ["team/"] }
+    }
+  ],
+  "maxParallel": 3
 }
 ```
+
+The list is the only place that decides which repositories a run may clone. A project's own `agent.config.json` may only choose the target the owner listed, and its `.gitmodules` may only name submodule repositories on the `allow` list, at every depth; anything else is refused, and an unlisted repository is never probed. Unknown fields are rejected, so a typo cannot widen access. `branchPrefixes` extends the safe branch prefixes (`agent/`, `feat/`, `fix/`, ...) for a project whose target branch template uses another one.
 
 `tokenOwner` selects the owner's ordered token list. For each project, `select` probes the repository with each token in order and picks the first that can read it, and for write steps can push and open pull requests (the repository response reports the token's permissions). A fine-grained token that does not cover the repository returns not-found and is skipped. Only the chosen token's position travels, inside the encrypted selection; the kind of token used is recorded in the private record, never in the public log. A project that needs a second repository (the existing `target` feature) keeps its own `target` block in its own `agent.config.json`.
 
 ## 5. Concurrency
 
-- Up to 3 run jobs at once, from different projects. The cap is configurable.
+- Up to 3 projects at once, one per slot. Each slot has its own clone, run and publish jobs and its own slot key, so there are exactly three of them.
 - One task at a time within a project. Stacked tasks depend on their parent's branch, so a project never runs two tasks at once.
-- A tick must not wait behind a long task, or one slow project would block every other. So the per-project lock is held per run job (a job-level concurrency group named by an opaque hash of the repository, never the repository name), not per workflow. The select step also skips a project whose previous run is still in progress. The lock is the existing `agent:running` label: a project with a live one is skipped, and one older than 3 hours (longer than a run can last) is a crashed run and is released as blocked, so a project never freezes. Waiting tasks (usage limit) are only resumed by the scheduled run, so a round cannot loop on them. The next round starts when the slowest project of the current round ends; the schedule and the manual start cover the gap.
+- A round must not wait behind a long task in another project. The lock is the existing `agent:running` label: a project with a live one is skipped, and one older than 4 hours (longer than the run job's 3-hour limit) is a crashed run and is released as blocked, so a project never freezes. A busy project does not ask for another round. A task paused by a usage limit keeps its place: nothing runs ahead of it, and only the scheduled run resumes it. The next round starts when the slowest project of the current round ends; the schedule and the manual start cover the gap.
 - Parallel runs share the Claude token(s). The existing fallback to a second account and the `agent:waiting` pause on exhaustion apply unchanged.
 
 ## 6. What stays hidden, and how it is enforced
@@ -71,7 +78,7 @@ Illustrative shape only (placeholders, not real names):
 | Channel | Rule |
 |---|---|
 | Run and job names | Neutral and index-only: `run`, `run (2)`. Never a repository name or an issue title. |
-| Matrix values | Indices only. The project assignment travels in the encrypted selection, not in matrix values, which can appear in job names. |
+| Job and artifact names | Constant (`clone 0`, `run 1`) or an HMAC tag under the slot key. No expression carries a repository, issue or project value. |
 | Actions log | The agent's and the checks' output already goes to files, not the log. Every other step is audited, and a test fails if a log line contains project text. |
 | Artifacts | Encrypted before upload (symmetric, integrity-protected), 3-day retention. |
 | Issues, PRs, comments | Live in the private project repository, written by `publish`. The runner repository gets none. |
@@ -137,7 +144,7 @@ No project-specific names or conventions enter the harness. The harness stays st
 ## 9. Risks and things to verify before relying on them
 
 - **Cron timing.** Scheduled workflows start late under load, and GitHub disables scheduled workflows in a public repository after 60 days without a commit (from memory; verify). The manual start is the fallback, and a keep-alive commit may be needed.
-- **Matrix values and job names.** Confirm that nothing from a matrix reaches a public page except the index.
+- **Job and artifact names.** Confirm in the dry run that the public run page shows only constant names and tags.
 - **Silent fallback.** Falling back from a fine-grained to a classic token could hide a misconfigured fine-grained token, and quietly widen access. The private record notes which kind each run used so this is visible.
 - **Classic tokens are broad.** A classic `repo`-scoped token reaches every private repository its owner can reach, including organisation repositories after SSO authorisation. If the runner's secrets were ever exposed, the damage would span all of them, not just the listed projects. Mitigations: one token per owner, never one for everything; an expiry on each; rotation as a routine; no token ever in the agent's environment (unchanged); the owner-only gate. Fine-grained tokens would narrow this for personally owned projects and can replace the classic one per owner later, with no design change. Also confirm that the organisation's token policy lets a classic token through (SSO authorisation), and the minimum scopes needed (`repo`, and nothing wider).
 - **Encryption tool (settled).** `node:crypto` AES-256-GCM with a scrypt-derived key, authenticated, no extra tooling, tested locally. The auth tag is checked before anything is unpacked. `gpg` and `age` are not used.

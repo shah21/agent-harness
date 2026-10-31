@@ -1717,6 +1717,8 @@ git commit -m "feat: trimmed run records in the private store"
 
 ### Task 8: The clone script, the shared workflow, the caller template and the docs (hand task)
 
+> Superseded in part: the matrix workflow written here was replaced by the three-slot workflow of Part 2 (tasks 9-14), which a generator writes. The steps below describe the first version.
+
 `.github/**` is a protected path, so an agent run cannot make this change. Do it by hand, test-first. The tests below read the real files and pin the review-focus items.
 
 **Files:**
