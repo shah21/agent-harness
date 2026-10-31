@@ -53,9 +53,20 @@ export function githubClient({ token, fetchImpl = fetch }) {
       }));
     },
     async comments(repo, n) {
-      // One page: the READY comment is near the end, and a project must not be able to make the
-      // runner spend an unbounded number of calls on the owner's shared token.
-      return (await pages(`/repos/${repo}/issues/${n}/comments`, 100)).map((c) => ({ body: c.body ?? '' }));
+      // Comments come oldest first and the READY comment is near the end, so read the last two
+      // pages at most: a project must not be able to make the runner spend an unbounded number
+      // of calls on the owner's shared token.
+      const base = `/repos/${repo}/issues/${n}/comments?per_page=100`;
+      const first = await call('GET', `${base}&page=1`);
+      if (!first.ok) throw new Error(`github: GET failed (${first.status})`);
+      const items = await first.json();
+      const last = Number(/[?&]page=(\d+)>;\s*rel="last"/.exec(first.headers?.get?.('link') ?? '')?.[1] ?? 1);
+      let out = items;
+      if (last > 1) {
+        out = [];
+        for (const page of [last - 1, last]) out.push(...(page === 1 ? items : await getJson(`${base}&page=${page}`)));
+      }
+      return out.map((c) => ({ body: c.body ?? '' }));
     },
     async prMerged(repo, n) {
       return (await getJson(`/repos/${repo}/pulls/${n}`)).merged === true;

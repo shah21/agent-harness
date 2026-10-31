@@ -97,3 +97,23 @@ test('prMerged reads the merged flag of one pull request', async () => {
   assert.equal(await c.prMerged('a/b', 7), true);
   assert.equal(await c.prMerged('a/b', 8), false);
 });
+
+test('comments reads the newest comments, not the oldest: the last two pages of a long thread', async () => {
+  const mk = (page) => Array.from({ length: 100 }, (_, i) => ({ body: `p${page}-${i}` }));
+  const { fetchImpl, calls } = makeFetch([{
+    method: 'GET',
+    match: /\/repos\/a\/b\/issues\/7\/comments/,
+    reply: (url) => {
+      const page = Number(/[?&]page=(\d+)/.exec(url)[1]);
+      return {
+        headers: { link: '<https://api.github.com/x?per_page=100&page=2>; rel="next", <https://api.github.com/x?per_page=100&page=3>; rel="last"' },
+        body: page === 3 ? [{ body: 'ready-last' }] : mk(page),
+      };
+    },
+  }]);
+  const out = await githubClient({ token: 't', fetchImpl }).comments('a/b', 7);
+  assert.equal(out.at(-1).body, 'ready-last');
+  assert.ok(out.some((c) => c.body === 'p2-0'), 'the page before the last is included');
+  assert.ok(!out.some((c) => c.body.startsWith('p1-')), 'the oldest page is not read');
+  assert.ok(calls.length <= 3);
+});

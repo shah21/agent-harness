@@ -151,8 +151,16 @@ test('the task, plan and title that reach the pull request come from the trusted
   assert.equal(r.verdict.task, 3);
   assert.equal(r.verdict.plan, 'docs/p.md');
   assert.equal(r.verdict.taskTitle, 'feat: add the thing');
+});
+
+test('a task with no trusted title is blocked, and a run never supplies the title itself (review L4)', () => {
   const noTitle = guard(verdict({ taskTitle: 'from the run' }), entry({ taskTitle: null }));
-  assert.equal(noTitle.verdict.taskTitle, 'from the run', 'without a trusted title the run\'s own is left, as text');
+  assert.equal(noTitle.ok, false);
+  const e = entry({ taskTitle: null });
+  e.selection = { ...e.selection, task: null, plan: null };
+  const plain = guard(verdict({ taskTitle: 'from the run', task: null, plan: null }), e);
+  assert.equal(plain.ok, true);
+  assert.equal(plain.verdict.taskTitle, null);
 });
 
 test('a bundle must be a regular git bundle file: a directory, a link or a file without the header is refused (review L1)', () => {

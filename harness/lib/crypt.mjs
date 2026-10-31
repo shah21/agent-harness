@@ -76,12 +76,19 @@ async function unpackSafely(archive, dir, allowLinks) {
   if (listing.status !== 0) throw new CryptError('unpacking failed');
   assertSafeNames(listing.stdout.split('\n').filter(Boolean));
   mkdirSync(dir, { recursive: true });
-  await exited(spawn('tar', ['-xf', archive, '-C', dir, '--no-same-owner', '--no-same-permissions'], { stdio: 'ignore' }), 'unpacking failed');
+  const empty = () => { for (const name of readdirSync(dir)) rmSync(join(dir, name), { recursive: true, force: true }); };
+  try {
+    await exited(spawn('tar', ['-xf', archive, '-C', dir, '--no-same-owner', '--no-same-permissions'], { stdio: 'ignore' }), 'unpacking failed');
+  } catch (e) {
+    // tar may have created links before it stopped; nothing it wrote is kept.
+    if (!allowLinks) empty();
+    throw e;
+  }
   if (!allowLinks) {
     try {
       assertNoLinks(dir);
     } catch (e) {
-      for (const name of readdirSync(dir)) rmSync(join(dir, name), { recursive: true, force: true });
+      empty();
       throw e;
     }
   }

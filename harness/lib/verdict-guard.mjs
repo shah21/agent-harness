@@ -38,6 +38,8 @@ export function guardVerdict({ verdict, entry, bundleDir, isBundle }) {
 
   const sel = entry.selection;
   const issue = sel.issue.number;
+  const trustedTitle = typeof entry.taskTitle === 'string' && entry.taskTitle !== '' ? entry.taskTitle : null;
+  if (sel.task != null && trustedTitle === null) return reject('task'); // never fall back to the run's own title
   const sameOrAbsent = (got, want) => got === undefined || got === null || got === (want ?? null);
   if (verdict.issue !== issue
     || verdict.branch !== `agent/issue-${issue}`
@@ -85,6 +87,6 @@ export function guardVerdict({ verdict, entry, bundleDir, isBundle }) {
   // What reaches a pull request title or a file name comes from the selection, not the run.
   out.task = sel.task ?? null;
   out.plan = sel.plan ?? null;
-  if (typeof entry.taskTitle === 'string' && entry.taskTitle !== '') out.taskTitle = entry.taskTitle;
+  out.taskTitle = trustedTitle;
   return { ok: true, verdict: out };
 }

@@ -15,7 +15,7 @@ set -Eeuo pipefail
 entry="${1:?entry.json}"
 dest="${2:?destination}"
 : "${RUNNER_TOKENS:?}"
-export GIT_ALLOW_PROTOCOL=https GIT_TERMINAL_PROMPT=0 GIT_CONFIG_NOSYSTEM=1
+export GIT_ALLOW_PROTOCOL=https GIT_TERMINAL_PROMPT=0 GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 CLI="$(cd "$(dirname "$0")" && pwd)/cli.mjs"
 
 fail() { echo "clone failed" >&2; exit 1; }

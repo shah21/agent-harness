@@ -73,7 +73,7 @@ A classic token reaches every private repository its owner can reach. Use one to
 
 Download the artifact `out-<tag>` from the run page. The output is sealed to the publish key and bound to its run and slot:
 
-    OPEN_PRIVATE_KEY="$(cat publish-keys/private.key)" node harness/cli.mjs open --in run-output.sealed --dir out --aad "<run id>:<slot>"
+    OPEN_PRIVATE_KEY="$(cat publish-keys/private.key)" node harness/cli.mjs open --in run-output.sealed --dir out --aad "<run id>-<attempt>:<slot>"
 
 ## If something looks wrong
 
@@ -87,7 +87,7 @@ Some of what this relies on is GitHub's behaviour and can only be checked there.
 1. A job that does not reference a secret does not receive it. Put a canary secret in the workflow's declared secrets, reference it only in one job, and read the runner process memory of another job.
 2. The public run page shows only constant job names and artifact names that are tags.
 3. Which actor a round started by `gh workflow run` with the workflow's own token has (the template admits `github-actions[bot]`).
-4. On a re-run, which artifacts are listed and what `name=` returns.
+4. On a re-run, which artifacts are listed (the earlier attempt's too) and what `name=` returns, and that "Re-run failed jobs" stops at once with the re-run-all message.
 5. What the repository API reports as `permissions.push` for a fine-grained token (it may describe the user, not the token).
 6. That a label that does not exist is created by adding it to an issue.
 7. That artifacts of a run can be deleted and re-uploaded by another job of the same run, and that the proofs make that useless.

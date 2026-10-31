@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, existsSync, chmodSync, lstatSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { encryptDir, decryptToDir } from '../harness/lib/crypt.mjs';
@@ -78,5 +78,23 @@ test('the output is bound to its run and index: a swapped or unbound file is ref
     const dest = tmp();
     await assert.rejects(() => decryptToDir(enc, dest, KEY, { aad }), /decryption failed/);
     assert.ok(!existsSync(join(dest, 'report.txt')));
+  }
+});
+
+test('a failed unpack leaves no link behind, even when tar stops part way', async () => {
+  const src = tmp();
+  mkdirSync(join(src, 'sub'));
+  writeFileSync(join(src, 'sub', 'f.txt'), 'x');
+  symlinkSync('/etc/hostname', join(src, 'l'));
+  const enc = join(tmp(), 'out.enc');
+  await encryptDir(src, enc, KEY, { allowLinks: true });
+  const dest = tmp();
+  mkdirSync(join(dest, 'sub'));
+  chmodSync(join(dest, 'sub'), 0o500); // extracting sub/f.txt fails
+  try {
+    await assert.rejects(decryptToDir(enc, dest, KEY));
+    assert.throws(() => lstatSync(join(dest, 'l')), 'the link is gone');
+  } finally {
+    if (existsSync(join(dest, 'sub'))) chmodSync(join(dest, 'sub'), 0o700);
   }
 });

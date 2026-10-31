@@ -11,6 +11,7 @@ export function makeFetch(handlers) {
         return {
           ok: status >= 200 && status < 300,
           status,
+          headers: { get: (k) => out.headers?.[String(k).toLowerCase()] ?? null },
           json: async () => out.body,
           text: async () => JSON.stringify(out.body ?? ''),
         };
