@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Small commands the reusable workflow calls between gh steps.
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, realpathSync, statSync } from 'node:fs';
+import { join, sep } from 'node:path';
 import { parseArgs } from 'node:util';
 import { selectNext, selectDebug, targetsToCheck } from './lib/queue.mjs';
 import { renderPrBody, renderComment, renderReviewRound, renderReviewSummary } from './lib/format.mjs';
@@ -11,6 +11,7 @@ import { loadConfig } from './lib/config.mjs';
 import { selectReview, buildReviewSelection, checkoutPlan } from './lib/pr-review.mjs';
 import { mergeIssueBody, renderReviewBlocked } from './lib/pr-review-format.mjs';
 import { parseGitmodules } from './lib/target.mjs';
+import { findTaskHeading } from './lib/issue.mjs';
 import {
   encryptDir, decryptToDir, sealDir, openSealed, generateKeypair, tagFor, CryptError,
 } from './lib/crypt.mjs';
@@ -44,6 +45,8 @@ const USAGE = `usage:
   cli.mjs decrypt --in <f> --dir <d> [--aad <s>]    (key in env RUN_KEY)
   cli.mjs leak-scan --blocklist <f> [--root <d>]... [--file <f>]...
   cli.mjs guard-verdict --verdict <f> --entry <f> --bundle-dir <d>
+  cli.mjs submodule-plan --entry <f> --gitmodules <f>
+  cli.mjs entry-title --entry <f> --project <dir>
   cli.mjs keygen --out <dir>                  (writes public.key and private.key)
   cli.mjs seal --dir <d> --out <f> [--key-file <f>] [--aad <s>] [--allow-links]   (key in env SEAL_PUBLIC_KEY)
   cli.mjs open --in <f> --dir <d> [--key-file <f>] [--aad <s>] [--allow-links]    (key in env OPEN_PRIVATE_KEY)
@@ -89,7 +92,7 @@ try {
       ready: { type: 'string' }, config: { type: 'string' }, out: { type: 'string' }, 'target-prs': { type: 'string' },
       candidates: { type: 'string' }, repo: { type: 'string' }, project: { type: 'string' }, body: { type: 'string' },
       selections: { type: 'string' }, index: { type: 'string' }, dir: { type: 'string' }, in: { type: 'string' },
-      entry: { type: 'string' }, 'bundle-dir': { type: 'string' }, 'key-file': { type: 'string' }, 'allow-links': { type: 'boolean' }, label: { type: 'string' }, 'run-id': { type: 'string' },
+      gitmodules: { type: 'string' }, entry: { type: 'string' }, 'bundle-dir': { type: 'string' }, 'key-file': { type: 'string' }, 'allow-links': { type: 'boolean' }, label: { type: 'string' }, 'run-id': { type: 'string' },
       aad: { type: 'string' }, blocklist: { type: 'string' }, root: { type: 'string', multiple: true }, file: { type: 'string', multiple: true },
     },
   }));
@@ -239,6 +242,37 @@ switch (command) {
       process.exit(1);
     }
     break;
+  case 'submodule-plan': {
+    // Lists the submodule paths to initialise, but only if every one is on the owner's allow-list.
+    try {
+      const allowed = new Set((read(values.entry).target?.allow ?? []).map((r) => r.toLowerCase()));
+      const subs = parseGitmodules(readFileSync(values.gitmodules, 'utf8'));
+      if (subs.some((x) => !allowed.has(x.repo.toLowerCase()))) throw new Error('not allowed');
+      for (const x of subs) process.stdout.write(`${x.path}\n`);
+    } catch {
+      console.error('submodule not allowed');
+      process.exit(1);
+    }
+    break;
+  }
+  case 'entry-title': {
+    // The task title (it names the target branch) is read here, by a trusted job, from the plan
+    // in the checkout, so the run cannot choose it. A plan that is a link out of the checkout is
+    // not followed.
+    const entry = read(values.entry);
+    let title = null;
+    try {
+      const root = realpathSync(values.project);
+      const file = realpathSync(join(root, entry.selection.plan));
+      if (file.startsWith(root + sep) && statSync(file).isFile() && statSync(file).size <= 2_000_000) {
+        title = findTaskHeading(readFileSync(file, 'utf8'), entry.selection.task);
+      }
+    } catch {
+      title = null;
+    }
+    writeFileSync(values.entry, `${JSON.stringify({ ...entry, taskTitle: title }, null, 2)}\n`);
+    break;
+  }
   case 'guard-verdict': {
     let text;
     try {
