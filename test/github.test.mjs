@@ -117,3 +117,18 @@ test('comments reads the newest comments, not the oldest: the last two pages of 
   assert.ok(!out.some((c) => c.body.startsWith('p1-')), 'the oldest page is not read');
   assert.ok(calls.length <= 3);
 });
+
+test('comments: last page 2 reuses page 1, and a reply with no Link header is one page', async () => {
+  const page1 = Array.from({ length: 100 }, (_, i) => ({ body: `a${i}` }));
+  const two = makeFetch([{ method: 'GET', match: /\/issues\/1\/comments/, reply: (url) => ({
+    headers: { link: '<https://api.github.com/x?per_page=100&page=2>; rel="last"' },
+    body: /[?&]page=2$/.test(url) ? [{ body: 'b0' }] : page1,
+  }) }]);
+  const a = await githubClient({ token: 't', fetchImpl: two.fetchImpl }).comments('a/b', 1);
+  assert.equal(a.length, 101);
+  assert.equal(two.calls.length, 2);
+  const one = makeFetch([{ method: 'GET', match: /\/issues\/1\/comments/, reply: { body: page1 } }]);
+  const b = await githubClient({ token: 't', fetchImpl: one.fetchImpl }).comments('a/b', 1);
+  assert.equal(b.length, 100);
+  assert.equal(one.calls.length, 1);
+});

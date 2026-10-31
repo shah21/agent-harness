@@ -77,6 +77,8 @@ Download the artifact `out-<tag>` from the run page. The output is sealed to the
 
 ## If something looks wrong
 
+- "Re-run all jobs" does not retry a task whose publish died before it could label the issue: the issue keeps `agent:running` and is skipped as busy until the stale release (about 4 hours) marks it `agent:blocked`. Remove `agent:running` by hand to retry sooner.
+
 - A run of a project that might have run hostile code: rotate that slot's `SLOT_KEY_<n>` and the Claude token. The repository tokens were never in the run job.
 - The repository's tokens or `RUN_KEY` leaked some other way: rotate them. They take effect for new runs.
 

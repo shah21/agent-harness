@@ -429,7 +429,7 @@ const SLOT = `
         run: |
           mkdir -p "$RUNNER_TEMP/agent"
           if bash .harness/harness/wait-artifact.sh out "$RUNNER_TEMP/run-output.sealed" 0; then
-            node .harness/harness/cli.mjs open --in "$RUNNER_TEMP/run-output.sealed" --dir "$RUNNER_TEMP/agent" --aad "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT:@K@" || echo "run output could not be opened"
+            node .harness/harness/cli.mjs open --in "$RUNNER_TEMP/run-output.sealed" --dir "$RUNNER_TEMP/agent" --aad "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT:@K@" || { echo "run output could not be opened"; chmod -R u+rwX "$RUNNER_TEMP/agent" 2>/dev/null || true; rm -rf "$RUNNER_TEMP/agent"; mkdir -p "$RUNNER_TEMP/agent"; }
             # Anyone can seal to the public publish key; only a holder of this slot's key can sign.
             verdict="$RUNNER_TEMP/agent/verdict.json"
             [ -f "$verdict" ] || verdict=""

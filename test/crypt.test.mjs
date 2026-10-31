@@ -98,3 +98,21 @@ test('a failed unpack leaves no link behind, even when tar stops part way', asyn
     if (existsSync(join(dest, 'sub'))) chmodSync(join(dest, 'sub'), 0o700);
   }
 });
+
+test('a read-only directory in the archive does not stop the clean-up that removes the links (review M-1)', async () => {
+  const src = tmp();
+  mkdirSync(join(src, 'a'));
+  writeFileSync(join(src, 'a', 'x'), 'x');
+  chmodSync(join(src, 'a'), 0o555);
+  symlinkSync('/etc/hostname', join(src, 'z'));
+  const enc = join(tmp(), 'out.enc');
+  try {
+    await encryptDir(src, enc, KEY, { allowLinks: true });
+  } finally {
+    chmodSync(join(src, 'a'), 0o755);
+  }
+  const dest = tmp();
+  await assert.rejects(decryptToDir(enc, dest, KEY));
+  assert.throws(() => lstatSync(join(dest, 'z')), 'the link is gone');
+  assert.throws(() => lstatSync(join(dest, 'a')), 'the read-only directory is gone');
+});

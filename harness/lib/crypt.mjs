@@ -11,7 +11,7 @@ import {
   generateKeyPairSync, hkdfSync, randomBytes, scryptSync, timingSafeEqual,
 } from 'node:crypto';
 import {
-  appendFileSync, closeSync, createReadStream, createWriteStream, lstatSync, mkdirSync, mkdtempSync,
+  appendFileSync, chmodSync, closeSync, createReadStream, createWriteStream, lstatSync, mkdirSync, mkdtempSync,
   openSync, readdirSync, readSync, rmSync, statSync, writeFileSync,
 } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
@@ -76,7 +76,19 @@ async function unpackSafely(archive, dir, allowLinks) {
   if (listing.status !== 0) throw new CryptError('unpacking failed');
   assertSafeNames(listing.stdout.split('\n').filter(Boolean));
   mkdirSync(dir, { recursive: true });
-  const empty = () => { for (const name of readdirSync(dir)) rmSync(join(dir, name), { recursive: true, force: true }); };
+  // A directory extracted as read-only would stop the removal part way and leave links behind,
+  // so every directory is made writable first. Links are never followed.
+  const writable = (d) => {
+    chmodSync(d, 0o700);
+    for (const name of readdirSync(d)) {
+      const p = join(d, name);
+      if (lstatSync(p).isDirectory()) writable(p);
+    }
+  };
+  const empty = () => {
+    writable(dir);
+    for (const name of readdirSync(dir)) rmSync(join(dir, name), { recursive: true, force: true });
+  };
   try {
     await exited(spawn('tar', ['-xf', archive, '-C', dir, '--no-same-owner', '--no-same-permissions'], { stdio: 'ignore' }), 'unpacking failed');
   } catch (e) {
