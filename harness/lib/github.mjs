@@ -55,6 +55,9 @@ export function githubClient({ token, fetchImpl = fetch }) {
     async comments(repo, n) {
       return (await pages(`/repos/${repo}/issues/${n}/comments`)).map((c) => ({ body: c.body ?? '' }));
     },
+    async prMerged(repo, n) {
+      return (await getJson(`/repos/${repo}/pulls/${n}`)).merged === true;
+    },
     async closedMergedPrs(repo) {
       return (await getJson(`/repos/${repo}/pulls?state=closed&sort=updated&direction=desc&per_page=30`))
         .filter((p) => p.merged_at)

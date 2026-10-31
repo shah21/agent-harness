@@ -48,27 +48,40 @@ export async function selectAcrossProjects({ projects, maxParallel, load, now, r
   const chosen = [];
   const released = [];
   let more = false;
+  let failed = 0;
   for (const [position, project] of projects.entries()) {
-    const data = await load(project);
+    // One project's API error must not stop the others.
+    let data;
+    try {
+      data = await load(project);
+    } catch {
+      failed += 1;
+      continue;
+    }
     if (!data) continue;
     const { busy, stale } = runningState(data.issues, now);
     for (const issue of stale) released.push({ project, issue });
     const staleSet = new Set(stale);
-    // A released task counts as blocked, so later tasks of its plan wait behind it.
+    // A released task counts as blocked and is no longer queued, so later tasks of its plan
+    // wait behind it and it is not run in the same round it was released.
     const issues = data.issues.map((i) => (staleSet.has(i.number)
-      ? { ...i, labels: [...i.labels.filter((l) => l.name !== 'agent:running'), { name: 'agent:blocked' }] }
+      ? { ...i, labels: [...i.labels.filter((l) => !['agent:running', 'agent', 'agent:waiting'].includes(l.name)), { name: 'agent:blocked' }] }
       : i));
-    // Without `resume`, waiting tasks stay parked; selectNext would otherwise pick them up.
-    const visible = resume ? issues : issues.map((i) => (has(i, 'agent:waiting') ? { ...i, labels: i.labels.filter((l) => l.name !== 'agent:waiting') } : i));
-    const waiting = visible.filter((i) => queued(i, resume)).length;
-    if (busy || chosen.length >= maxParallel) {
+    // A busy project is left alone and does not ask for another round: it would only be
+    // found busy again. Its own running round continues its queue.
+    if (busy) continue;
+    const waiting = issues.filter((i) => queued(i, resume)).length;
+    if (chosen.length >= maxParallel) {
       more ||= waiting > 0;
       continue;
     }
-    const selection = selectNext({ issues: visible, prs: data.prs, defaultBranch: data.defaultBranch, ready: data.ready });
+    const selection = selectNext({ issues, prs: data.prs, defaultBranch: data.defaultBranch, ready: data.ready });
     if (!selection.issue) continue;
+    // A task paused by a usage limit keeps its place: nothing runs ahead of it unless the
+    // scheduled run is resuming it.
+    if (!resume && has(issues.find((i) => i.number === selection.issue.number), 'agent:waiting')) continue;
     chosen.push({ position, project, selection, defaultBranch: data.defaultBranch, data });
     more ||= waiting > 1;
   }
-  return { chosen, released, more };
+  return { chosen, released, more, failed };
 }

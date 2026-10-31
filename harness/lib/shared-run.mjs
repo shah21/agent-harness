@@ -4,10 +4,27 @@ import { parseProjects } from './projects.mjs';
 import { parseTokenMap, resolveToken, makeProbe } from './tokens.mjs';
 import { githubClient } from './github.mjs';
 import { loadProject, closeMergedFor, selectAcrossProjects } from './shared-select.mjs';
+import { targetsToCheck } from './queue.mjs';
 import { loadConfig } from './config.mjs';
 
 // The same expression `target-info` uses for the target checkout ref.
 const targetRef = (selection) => selection.targets?.superBranch ?? selection.targetBase ?? '';
+
+// A task whose target-repository pull request merged is done; the per-repository workflow
+// that used to close it does not run in a project that has moved to the runner.
+async function closeMergedTargets({ project, data, client, tokenMap, probe, fetchImpl }) {
+  const closed = [];
+  for (const t of targetsToCheck(data.ready)) {
+    const list = tokenMap[project.targetTokenOwner ?? t.repo.split('/')[0]];
+    const r = list ? await resolveToken({ repo: t.repo, tokens: list, needsWrite: false, probe }) : null;
+    if (!r) continue;
+    if (await githubClient({ token: list[r.index], fetchImpl }).prMerged(t.repo, t.number)) {
+      await client.closeIssue(project.repo, t.issue);
+      closed.push(t.issue);
+    }
+  }
+  return closed;
+}
 
 export async function runSharedSelect({ projectsText, tokensText, outDir, fetchImpl = fetch, now = Date.now(), resume = false }) {
   const { projects, maxParallel } = parseProjects(projectsText);
@@ -18,9 +35,16 @@ export async function runSharedSelect({ projectsText, tokensText, outDir, fetchI
   const clients = new Map();
   const usable = [];
   let skippedNoToken = 0;
+  let failed = 0;
   for (const p of projects) {
     const list = tokenMap[p.tokenOwner];
-    const r = list ? await resolveToken({ repo: p.repo, tokens: list, needsWrite: true, probe }) : null;
+    let r = null;
+    try {
+      r = list ? await resolveToken({ repo: p.repo, tokens: list, needsWrite: true, probe }) : null;
+    } catch {
+      failed += 1;
+      continue;
+    }
     if (!r) {
       skippedNoToken += 1;
       continue;
@@ -34,21 +58,32 @@ export async function runSharedSelect({ projectsText, tokensText, outDir, fetchI
     const client = clients.get(p.repo);
     const data = await loadProject(client, p.repo);
     const closed = new Set(await closeMergedFor({ repo: p.repo, client, issues: data.issues }));
+    for (const n of await closeMergedTargets({ project: p, data, client, tokenMap, probe, fetchImpl })) closed.add(n);
     return { ...data, issues: data.issues.filter((i) => !closed.has(i.number)) };
   };
-  const { chosen, released, more } = await selectAcrossProjects({ projects: usable, maxParallel, load, now, resume });
+  const picked = await selectAcrossProjects({ projects: usable, maxParallel, load, now, resume });
+  const { chosen, released, more } = picked;
+  failed += picked.failed;
 
   for (const { project, issue } of released) {
-    const client = clients.get(project.repo);
-    await client.setLabels(project.repo, issue, { remove: ['agent:running'], add: ['agent:blocked'] });
-    await client.comment(project.repo, issue, '⛔ **BLOCKED** (runner)\n\n- the previous run did not finish (no result was recorded)\n\nTo retry: remove `agent:blocked` and add `agent`.');
+    try {
+      const client = clients.get(project.repo);
+      await client.setLabels(project.repo, issue, { remove: ['agent:running', 'agent', 'agent:waiting'], add: ['agent:blocked'] });
+      await client.comment(project.repo, issue, '⛔ **BLOCKED** (runner)\n\n- the previous run did not finish (no result was recorded)\n\nTo retry: remove `agent:blocked` and add `agent`.');
+    } catch {
+      failed += 1;
+    }
   }
 
   const entries = [];
-  for (const [index, c] of chosen.entries()) {
+  for (const c of chosen) {
     const { repo } = c.project;
-    const client = clients.get(repo);
-    await client.setLabels(repo, c.selection.issue.number, { remove: ['agent', 'agent:waiting'], add: ['agent:running'] });
+    try {
+      await clients.get(repo).setLabels(repo, c.selection.issue.number, { remove: ['agent', 'agent:waiting'], add: ['agent:running'] });
+    } catch {
+      failed += 1;
+      continue;
+    }
     let target = null;
     try {
       const t = c.data.configText ? loadConfig(c.data.configText).target : null;
@@ -62,10 +97,10 @@ export async function runSharedSelect({ projectsText, tokensText, outDir, fetchI
     } catch {
       // an invalid config is reported by the run itself
     }
-    entries.push({ index, repo, ...resolved.get(repo), defaultBranch: c.defaultBranch, selection: c.selection, target });
+    entries.push({ index: entries.length, repo, ...resolved.get(repo), defaultBranch: c.defaultBranch, selection: c.selection, target });
   }
 
   mkdirSync(outDir, { recursive: true });
   writeFileSync(join(outDir, 'selections.json'), `${JSON.stringify(entries, null, 2)}\n`);
-  return { count: entries.length, more, skippedNoToken };
+  return { count: entries.length, more, skippedNoToken, failed };
 }

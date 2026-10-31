@@ -31,14 +31,14 @@ test('one task per project, in project order, up to the cap', async () => {
   assert.equal(r.more, true, 'a third project and a second task are still queued');
 });
 
-test('a project with a recent running task is left alone; nothing queued gives nothing', async () => {
+test('a project with a recent running task is left alone, and does not ask for another round', async () => {
   const table = {
     'a/one': data([issue(1, 1, ['agent:running'], { updatedAt: iso(1000) }), issue(2, 2, ['agent'])]),
     'a/two': data([issue(3, 1, ['agent:ready'])]),
   };
   const r = await selectAcrossProjects({ projects: ['a/one', 'a/two'].map(project), maxParallel: 3, load: loadFrom(table), now: NOW });
   assert.deepEqual(r.chosen, []);
-  assert.equal(r.more, true, 'a/one still has a queued task behind its running one');
+  assert.equal(r.more, false, 'rerunning at once would only find the project busy again');
 });
 
 test('a stale running label is released as blocked, so the project does not freeze (review focus 3)', async () => {
@@ -55,6 +55,35 @@ test('waiting tasks are only picked up when resuming (the scheduled run)', async
   const common = { projects: [project('a/one')], maxParallel: 3, load: loadFrom(table), now: NOW };
   assert.equal((await selectAcrossProjects({ ...common, resume: false })).chosen.length, 0);
   assert.equal((await selectAcrossProjects({ ...common, resume: true })).chosen.length, 1);
+});
+
+test('a paused task keeps its place: a later task never jumps ahead of it', async () => {
+  const table = { 'a/one': data([issue(1, 1, ['agent:waiting']), issue(2, 2, ['agent'])]) };
+  const common = { projects: [project('a/one')], maxParallel: 3, load: loadFrom(table), now: NOW };
+  const off = await selectAcrossProjects({ ...common, resume: false });
+  assert.deepEqual(off.chosen, []);
+  assert.equal(off.more, false);
+  const on = await selectAcrossProjects({ ...common, resume: true });
+  assert.equal(on.chosen[0].selection.issue.number, 1);
+});
+
+test('a stale task that was also re-labelled for a retry is released, not run in the same round', async () => {
+  const both = issue(1, 1, ['agent:running', 'agent'], { updatedAt: iso(STALE_MS + 1) });
+  const table = { 'a/one': data([both]) };
+  const r = await selectAcrossProjects({ projects: [project('a/one')], maxParallel: 3, load: loadFrom(table), now: NOW });
+  assert.deepEqual(r.released.map((x) => x.issue), [1]);
+  assert.deepEqual(r.chosen, []);
+});
+
+test('one project failing to load does not stop the others, and nothing names it', async () => {
+  const table = { 'a/two': data([issue(3, 1, ['agent'])]) };
+  const load = async (p) => {
+    if (p.repo === 'zzsecret/broken') throw new Error('github: GET failed (500)');
+    return table[p.repo];
+  };
+  const r = await selectAcrossProjects({ projects: ['zzsecret/broken', 'a/two'].map(project), maxParallel: 3, load, now: NOW });
+  assert.deepEqual(r.chosen.map((c) => c.project.repo), ['a/two']);
+  assert.equal(r.failed, 1);
 });
 
 test('loadProject collects issues, PRs, ready comments, config and the default branch', async () => {

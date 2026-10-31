@@ -87,3 +87,13 @@ test('putFile creates a file, and updates it with the current sha when it exists
   assert.equal(Buffer.from(puts[0].content, 'base64').toString(), '{"n":1}');
   assert.equal(puts[1].sha, 'abc123');
 });
+
+test('prMerged reads the merged flag of one pull request', async () => {
+  const { fetchImpl } = makeFetch([
+    { method: 'GET', match: /\/repos\/a\/b\/pulls\/7$/, reply: { body: { merged: true } } },
+    { method: 'GET', match: /\/repos\/a\/b\/pulls\/8$/, reply: { body: { merged: false } } },
+  ]);
+  const c = githubClient({ token: 't', fetchImpl });
+  assert.equal(await c.prMerged('a/b', 7), true);
+  assert.equal(await c.prMerged('a/b', 8), false);
+});
