@@ -15,6 +15,7 @@ import {
   encryptDir, decryptToDir, sealDir, openSealed, generateKeypair, tagFor, CryptError,
 } from './lib/crypt.mjs';
 import { parseBlocklist, scanDir, scanText } from './lib/leak.mjs';
+import { guardVerdict } from './lib/verdict-guard.mjs';
 
 const USAGE = `usage:
   cli.mjs select --issues <f> --prs <f> --default-branch <b> [--ready <f>]
@@ -42,6 +43,7 @@ const USAGE = `usage:
   cli.mjs encrypt --dir <d> --out <f> [--aad <s>]   (key in env RUN_KEY)
   cli.mjs decrypt --in <f> --dir <d> [--aad <s>]    (key in env RUN_KEY)
   cli.mjs leak-scan --blocklist <f> [--root <d>]... [--file <f>]...
+  cli.mjs guard-verdict --verdict <f> --entry <f> --bundle-dir <d>
   cli.mjs keygen --out <dir>                  (writes public.key and private.key)
   cli.mjs seal --dir <d> --out <f> [--key-file <f>] [--aad <s>] [--allow-links]   (key in env SEAL_PUBLIC_KEY)
   cli.mjs open --in <f> --dir <d> [--key-file <f>] [--aad <s>] [--allow-links]    (key in env OPEN_PRIVATE_KEY)
@@ -87,7 +89,7 @@ try {
       ready: { type: 'string' }, config: { type: 'string' }, out: { type: 'string' }, 'target-prs': { type: 'string' },
       candidates: { type: 'string' }, repo: { type: 'string' }, project: { type: 'string' }, body: { type: 'string' },
       selections: { type: 'string' }, index: { type: 'string' }, dir: { type: 'string' }, in: { type: 'string' },
-      'key-file': { type: 'string' }, 'allow-links': { type: 'boolean' }, label: { type: 'string' }, 'run-id': { type: 'string' },
+      entry: { type: 'string' }, 'bundle-dir': { type: 'string' }, 'key-file': { type: 'string' }, 'allow-links': { type: 'boolean' }, label: { type: 'string' }, 'run-id': { type: 'string' },
       aad: { type: 'string' }, blocklist: { type: 'string' }, root: { type: 'string', multiple: true }, file: { type: 'string', multiple: true },
     },
   }));
@@ -237,6 +239,26 @@ switch (command) {
       process.exit(1);
     }
     break;
+  case 'guard-verdict': {
+    let text;
+    try {
+      text = readFileSync(values.verdict, 'utf8');
+    } catch {
+      console.error('no verdict to check');
+      process.exit(1);
+    }
+    const entry = read(values.entry);
+    let parsed;
+    try {
+      parsed = text.length > 5_000_000 ? null : JSON.parse(text);
+    } catch {
+      parsed = null;
+    }
+    const checked = guardVerdict({ verdict: parsed, entry, bundleDir: values['bundle-dir'], fileExists: existsSync });
+    if (checked.ok) print(checked.verdict);
+    else print(blockedVerdict(entry.selection, 'harness', checked.reason));
+    break;
+  }
   case 'keygen': {
     const { publicKey, privateKey } = generateKeypair();
     mkdirSync(values.out, { recursive: true });
