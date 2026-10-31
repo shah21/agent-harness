@@ -32,3 +32,8 @@ jobs:
       RUN_KEY: ${{ secrets.RUN_KEY }}
       STORE_REPO: ${{ secrets.STORE_REPO }}
       STORE_TOKEN: ${{ secrets.STORE_TOKEN }}
+      PUBLISH_PUBLIC_KEY: ${{ secrets.PUBLISH_PUBLIC_KEY }}
+      PUBLISH_PRIVATE_KEY: ${{ secrets.PUBLISH_PRIVATE_KEY }}
+      SLOT_KEY_0: ${{ secrets.SLOT_KEY_0 }}
+      SLOT_KEY_1: ${{ secrets.SLOT_KEY_1 }}
+      SLOT_KEY_2: ${{ secrets.SLOT_KEY_2 }}

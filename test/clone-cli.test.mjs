@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -55,47 +55,4 @@ test('with no allow-list, any submodule is refused; no .gitmodules entries means
   const empty = run(['submodule-plan', '--entry', entry, '--gitmodules', mods]);
   assert.equal(empty.status, 0);
   assert.equal(empty.stdout, '');
-});
-
-const planText = '# Plan\n\n## Task 1: First\n\nx\n\n## Task 2: feat: the second thing\n\ny\n';
-function projectWithPlan() {
-  const dir = tmp();
-  mkdirSync(join(dir, 'docs'));
-  writeFileSync(join(dir, 'docs', 'p.md'), planText);
-  const entryFile = join(tmp(), 'entry.json');
-  writeFileSync(entryFile, JSON.stringify(entryWith(null)));
-  return { dir, entryFile };
-}
-
-test('entry-title records the task heading from the plan in the checkout', () => {
-  const { dir, entryFile } = projectWithPlan();
-  const r = run(['entry-title', '--entry', entryFile, '--project', dir]);
-  assert.equal(r.status, 0, r.stderr);
-  assert.equal(r.stdout + r.stderr, '');
-  assert.equal(JSON.parse(readFileSync(entryFile, 'utf8')).taskTitle, 'feat: the second thing');
-});
-
-test('entry-title records nothing for a missing plan, a missing heading, or a plan that is a link out of the checkout', () => {
-  const { dir, entryFile } = projectWithPlan();
-  const titleOf = () => JSON.parse(readFileSync(entryFile, 'utf8')).taskTitle;
-
-  writeFileSync(entryFile, JSON.stringify(entryWith(null, { task: 9 })));
-  run(['entry-title', '--entry', entryFile, '--project', dir]);
-  assert.equal(titleOf(), null, 'no such heading');
-
-  writeFileSync(entryFile, JSON.stringify(entryWith(null, { plan: 'docs/missing.md' })));
-  run(['entry-title', '--entry', entryFile, '--project', dir]);
-  assert.equal(titleOf(), null, 'no such file');
-
-  const outside = join(tmp(), 'secret.md');
-  writeFileSync(outside, '## Task 2: stolen from outside the checkout\n');
-  symlinkSync(outside, join(dir, 'docs', 'link.md'));
-  writeFileSync(entryFile, JSON.stringify(entryWith(null, { plan: 'docs/link.md' })));
-  const r = run(['entry-title', '--entry', entryFile, '--project', dir]);
-  assert.equal(r.status, 0);
-  assert.equal(titleOf(), null, 'a link that leaves the checkout is not followed');
-
-  writeFileSync(entryFile, JSON.stringify(entryWith(null, { plan: null, skip: 'bad task reference' })));
-  run(['entry-title', '--entry', entryFile, '--project', dir]);
-  assert.equal(titleOf(), null, 'a gate-skipped selection has no plan');
 });

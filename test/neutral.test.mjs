@@ -58,3 +58,16 @@ test('step env values that carry project data are flagged: GitHub prints them (C
     [6, 'steps.entry.outputs.default'], [7, 'needs.select.outputs.base'], [8, 'matrix.repo'], [9, 'github.event.issue.title'],
   ]);
 });
+
+test('slot-keyed tags may name artifacts, but no other step output may', () => {
+  const y = [
+    '      - name: Upload',
+    '        with:',
+    '          name: pub-${{ steps.names.outputs.pub }}',
+    '          name: bundle-${{ steps.names.outputs.bundle }}',
+    '          name: out-${{ steps.names.outputs.out }}',
+    '          name: x-${{ steps.names.outputs.repo }}',
+    '          name: ${{ steps.entry.outputs.repo }}',
+  ].join('\n');
+  assert.deepEqual(lintNeutralNames(y).map((v) => v.line), [6, 7]);
+});

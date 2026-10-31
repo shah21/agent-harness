@@ -1,8 +1,9 @@
 import { selectNext } from './queue.mjs';
 import { issueToClose } from './merged.mjs';
 
-// A task that has carried `agent:running` for longer than a run can last is a crashed run.
-export const STALE_MS = 3 * 60 * 60 * 1000;
+// A task that has carried `agent:running` for longer than a run can last (the run job's limit
+// is 3 hours) is a crashed run.
+export const STALE_MS = 4 * 60 * 60 * 1000;
 
 const names = (i) => i.labels.map((l) => l.name);
 const has = (i, name) => names(i).includes(name);

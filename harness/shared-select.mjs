@@ -25,7 +25,7 @@ try {
     outDir: need('--out', values.out),
     resume: process.env.EVENT_NAME === 'schedule',
   });
-  process.stdout.write(`count=${r.count}\nmore=${r.more}\nmatrix=${JSON.stringify([...Array(r.count).keys()])}\n`);
+  process.stdout.write(`count=${r.count}\nmore=${r.more}\n`);
 } catch (e) {
   console.error(`select failed: ${e.message}`);
   process.exit(1);

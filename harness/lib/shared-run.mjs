@@ -6,6 +6,7 @@ import { githubClient } from './github.mjs';
 import { loadProject, closeMergedFor, selectAcrossProjects } from './shared-select.mjs';
 import { targetsToCheck } from './queue.mjs';
 import { loadConfig } from './config.mjs';
+import { findTaskHeading } from './issue.mjs';
 
 // The same expression `target-info` uses for the target checkout ref.
 const targetRef = (selection) => selection.targets?.superBranch ?? selection.targetBase ?? '';
@@ -109,7 +110,18 @@ export async function runSharedSelect({ projectsText, tokensText, outDir, fetchI
     } catch {
       // an invalid config is reported by the run itself
     }
-    entries.push({ index: entries.length, repo, ...resolved.get(repo), defaultBranch: c.defaultBranch, selection: c.selection, target });
+    // The task title names the target branch, so it is read here, by a trusted job, from the plan
+    // at the selection's base: through the API, so a plan that is a link yields no content.
+    let taskTitle = null;
+    try {
+      if (!c.selection.skip && c.selection.plan) {
+        const planText = await clients.get(repo).fileContent(repo, c.selection.plan, c.selection.base);
+        taskTitle = planText ? findTaskHeading(planText, c.selection.task) : null;
+      }
+    } catch {
+      taskTitle = null;
+    }
+    entries.push({ index: entries.length, repo, ...resolved.get(repo), defaultBranch: c.defaultBranch, taskTitle, selection: c.selection, target });
   }
 
   mkdirSync(outDir, { recursive: true });

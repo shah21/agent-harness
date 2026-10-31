@@ -15,6 +15,7 @@ const repoHandlers = (repo, { issues, config = cfg(), push = true, branch = 'mai
   { method: 'GET', match: new RegExp(`/repos/${repo}/pulls\\?state=open`), reply: { body: [] } },
   { method: 'GET', match: new RegExp(`/repos/${repo}/pulls\\?state=closed`), reply: { body: [] } },
   { method: 'GET', match: new RegExp(`/repos/${repo}/contents/agent\\.config\\.json`), reply: { body: { content: Buffer.from(config).toString('base64'), encoding: 'base64' } } },
+  { method: 'GET', match: new RegExp(`/repos/${repo}/contents/docs/p\\.md`), reply: (url) => (/ref=agent%2Fissue-3$/.test(url) || /ref=main$/.test(url) ? { body: { content: Buffer.from('# Plan\n\n## Task 1: First\n\n## Task 2: feat: the second thing\n').toString('base64'), encoding: 'base64' } } : { status: 404, body: {} }) },
   { method: 'PUT', match: /./, reply: { body: {} } },
   { method: 'POST', match: new RegExp(`/repos/${repo}/issues/\\d+/labels`), reply: { body: [] } },
   { method: 'POST', match: new RegExp(`/repos/${repo}/issues/\\d+/comments`), reply: { body: {} } },
@@ -157,4 +158,28 @@ test('merge checks only follow pull requests in repositories the owner listed', 
   await runSharedSelect({ projectsText: JSON.stringify({ projects: [{ repo: 'alice/one', target: { repo: 'org/code' } }] }), tokensText: JSON.stringify({ alice: ['ghp_ok'], org: ['ghp_org'], victim: ['ghp_ok'] }), outDir: out(), fetchImpl, now: NOW });
   assert.ok(!calls.some((c) => /victim\/private/.test(c.url)));
   assert.ok(!calls.some((c) => c.method === 'PATCH' && /issues\/5$/.test(c.url)));
+});
+
+test('the task title that names the target branch is read from the plan through the API, by the trusted job', async () => {
+  const { fetchImpl, calls } = makeFetch(repoHandlers('alice/one', { issues: [{ ...gi(1, 2), body: 'plan: docs/p.md\ntask: 2' }] }));
+  const dir = out();
+  await runSharedSelect({ projectsText: JSON.stringify({ projects: [{ repo: 'alice/one' }] }), tokensText: tokens, outDir: dir, fetchImpl, now: NOW });
+  const [e] = JSON.parse(readFileSync(join(dir, 'selections.json'), 'utf8'));
+  assert.equal(e.taskTitle, 'feat: the second thing');
+  assert.ok(calls.some((c) => /contents\/docs\/p\.md\?ref=main$/.test(c.url)), 'read at the selection\'s base');
+});
+
+test('a missing heading, a missing plan or a plan the API serves as a link give no title', async () => {
+  const dir = out();
+  const { fetchImpl } = makeFetch(repoHandlers('alice/one', { issues: [{ ...gi(1, 9), body: 'plan: docs/p.md\ntask: 9' }] }));
+  await runSharedSelect({ projectsText: JSON.stringify({ projects: [{ repo: 'alice/one' }] }), tokensText: tokens, outDir: dir, fetchImpl, now: NOW });
+  assert.equal(JSON.parse(readFileSync(join(dir, 'selections.json'), 'utf8'))[0].taskTitle, null, 'no Task 9 heading');
+
+  const dir2 = out();
+  const link = makeFetch([
+    ...repoHandlers('alice/one', { issues: [{ ...gi(1, 2), body: 'plan: docs/other.md\ntask: 2' }] }),
+    { method: 'GET', match: /contents\/docs\/other\.md/, reply: { body: { type: 'symlink', target: '../../etc/passwd' } } },
+  ]);
+  await runSharedSelect({ projectsText: JSON.stringify({ projects: [{ repo: 'alice/one' }] }), tokensText: tokens, outDir: dir2, fetchImpl: link.fetchImpl, now: NOW });
+  assert.equal(JSON.parse(readFileSync(join(dir2, 'selections.json'), 'utf8'))[0].taskTitle, null, 'a symbolic link is not content');
 });

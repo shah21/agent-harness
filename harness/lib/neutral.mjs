@@ -3,7 +3,8 @@
 // may be interpolated there.
 const KEYED = /^\s*(?:-\s+)?(name|run-name|group):\s*(.*)$/;
 const EXPR = /\$\{\{([^}]*)\}\}/g;
-const ALLOWED = /^(?:strategy\.job-index|matrix\.index|github\.run_number|github\.run_id)$/;
+// `steps.names.outputs.*` are slot-keyed tags (an HMAC of the run id): they name nothing.
+const ALLOWED = /^(?:strategy\.job-index|matrix\.index|github\.run_number|github\.run_id|steps\.names\.outputs\.(?:pub|bundle|out))$/;
 
 export function lintNeutralNames(text) {
   const bad = [];

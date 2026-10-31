@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Small commands the reusable workflow calls between gh steps.
-import { readFileSync, writeFileSync, mkdirSync, existsSync, realpathSync, statSync } from 'node:fs';
-import { join, sep } from 'node:path';
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { selectNext, selectDebug, targetsToCheck } from './lib/queue.mjs';
 import { renderPrBody, renderComment, renderReviewRound, renderReviewSummary } from './lib/format.mjs';
@@ -11,12 +11,12 @@ import { loadConfig } from './lib/config.mjs';
 import { selectReview, buildReviewSelection, checkoutPlan } from './lib/pr-review.mjs';
 import { mergeIssueBody, renderReviewBlocked } from './lib/pr-review-format.mjs';
 import { parseGitmodules } from './lib/target.mjs';
-import { findTaskHeading } from './lib/issue.mjs';
 import {
   encryptDir, decryptToDir, sealDir, openSealed, generateKeypair, tagFor, CryptError,
 } from './lib/crypt.mjs';
 import { parseBlocklist, scanDir, scanText } from './lib/leak.mjs';
 import { guardVerdict } from './lib/verdict-guard.mjs';
+import { renderSharedWorkflow } from './lib/shared-workflow.mjs';
 
 const USAGE = `usage:
   cli.mjs select --issues <f> --prs <f> --default-branch <b> [--ready <f>]
@@ -46,7 +46,7 @@ const USAGE = `usage:
   cli.mjs leak-scan --blocklist <f> [--root <d>]... [--file <f>]...
   cli.mjs guard-verdict --verdict <f> --entry <f> --bundle-dir <d>
   cli.mjs submodule-plan --entry <f> --gitmodules <f>
-  cli.mjs entry-title --entry <f> --project <dir>
+  cli.mjs gen-shared-workflow --out <f>       (writes .github/workflows/run-shared.yml)
   cli.mjs keygen --out <dir>                  (writes public.key and private.key)
   cli.mjs seal --dir <d> --out <f> [--key-file <f>] [--aad <s>] [--allow-links]   (key in env SEAL_PUBLIC_KEY)
   cli.mjs open --in <f> --dir <d> [--key-file <f>] [--aad <s>] [--allow-links]    (key in env OPEN_PRIVATE_KEY)
@@ -242,6 +242,9 @@ switch (command) {
       process.exit(1);
     }
     break;
+  case 'gen-shared-workflow':
+    writeFileSync(values.out, renderSharedWorkflow());
+    break;
   case 'submodule-plan': {
     // Lists the submodule paths to initialise, but only if every one is on the owner's allow-list.
     try {
@@ -253,24 +256,6 @@ switch (command) {
       console.error('submodule not allowed');
       process.exit(1);
     }
-    break;
-  }
-  case 'entry-title': {
-    // The task title (it names the target branch) is read here, by a trusted job, from the plan
-    // in the checkout, so the run cannot choose it. A plan that is a link out of the checkout is
-    // not followed.
-    const entry = read(values.entry);
-    let title = null;
-    try {
-      const root = realpathSync(values.project);
-      const file = realpathSync(join(root, entry.selection.plan));
-      if (file.startsWith(root + sep) && statSync(file).isFile() && statSync(file).size <= 2_000_000) {
-        title = findTaskHeading(readFileSync(file, 'utf8'), entry.selection.task);
-      }
-    } catch {
-      title = null;
-    }
-    writeFileSync(values.entry, `${JSON.stringify({ ...entry, taskTitle: title }, null, 2)}\n`);
     break;
   }
   case 'guard-verdict': {
