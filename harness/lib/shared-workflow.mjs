@@ -92,6 +92,7 @@ jobs:
       group: selection
       cancel-in-progress: false
     outputs:
+      attempt: [[ github.run_attempt ]]
       count: [[ steps.select.outputs.count ]]
       more: [[ steps.select.outputs.more ]]
     steps:
@@ -143,6 +144,12 @@ const SLOT = `
       contents: read
       actions: read
     steps:
+      - name: Refuse a partial re-run
+        if: needs.select.outputs.attempt != github.run_attempt
+        run: |
+          echo "Re-run all jobs, not only the failed ones: the selection belongs to an earlier attempt."
+          exit 1
+
       - name: Checkout harness
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -225,6 +232,12 @@ const SLOT = `
       contents: read
       actions: read
     steps:
+      - name: Refuse a partial re-run
+        if: needs.select.outputs.attempt != github.run_attempt
+        run: |
+          echo "Re-run all jobs, not only the failed ones: the selection belongs to an earlier attempt."
+          exit 1
+
       - name: Checkout harness
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -375,6 +388,12 @@ const SLOT = `
       contents: read
       actions: read
     steps:
+      - name: Refuse a partial re-run
+        if: needs.select.outputs.attempt != github.run_attempt
+        run: |
+          echo "Re-run all jobs, not only the failed ones: the selection belongs to an earlier attempt."
+          exit 1
+
       - name: Checkout harness
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:

@@ -225,3 +225,17 @@ test('every action the trusted jobs run is pinned to a commit, not a tag that ca
   for (const u of uses) assert.match(u, /^actions\/[a-z-]+@[0-9a-f]{40}$/, u);
   assert.equal(new Set(uses).size, 4, 'checkout, setup-node, upload-artifact, download-artifact');
 });
+
+// "Re-run failed jobs" reuses the select job's output, but every tag, proof and aad carries the
+// new attempt, so a partial re-run could only wait or fail late. It has to stop at once.
+test('a partial re-run stops at once: select reports its attempt and each slot job checks it first', () => {
+  assert.match(jobs.select, /outputs:[\s\S]*attempt: \$\{\{ github\.run_attempt \}\}/);
+  for (let k = 0; k < SLOTS; k++) {
+    for (const part of ['clone', 'run', 'publish']) {
+      const first = stepsOf(jobs[`${part}_${k}`])[0];
+      assert.match(first, /if: needs\.select\.outputs\.attempt != github\.run_attempt/, `${part}_${k}`);
+      assert.match(first, /re-run all jobs/i, `${part}_${k}`);
+      assert.match(first, /exit 1/, `${part}_${k}`);
+    }
+  }
+});
