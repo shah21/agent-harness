@@ -7,7 +7,7 @@ const OWNER_RE = /^[A-Za-z0-9_-]+$/;
 const PREFIX_RE = /^[a-z0-9][a-z0-9._-]*\/$/;
 // One per slot of the shared workflow.
 export const MAX_SLOTS = 3;
-const PROJECT_KEYS = new Set(['repo', 'tokenOwner', 'target']);
+const PROJECT_KEYS = new Set(['repo', 'tokenOwner', 'target', 'isolated']);
 const TARGET_KEYS = new Set(['repo', 'tokenOwner', 'allow', 'branchPrefixes']);
 
 function repoList(value, i, field) {
@@ -56,6 +56,11 @@ export function parseProjects(text) {
     if (typeof tokenOwner !== 'string' || !OWNER_RE.test(tokenOwner)) throw new Error(`projects[${i}]: "tokenOwner" is not a valid owner name`);
     const out = { repo: p.repo, tokenOwner };
     if (p.target !== undefined) out.target = targetEntry(p.target, i);
+    // An isolated project runs alone in its round: no other project's code runs beside it.
+    if (p.isolated !== undefined) {
+      if (typeof p.isolated !== 'boolean') throw new Error(`projects[${i}]: "isolated" must be true or false`);
+      out.isolated = p.isolated;
+    }
     return out;
   });
   return { projects, maxParallel };

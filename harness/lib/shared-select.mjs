@@ -45,10 +45,16 @@ export async function closeMergedFor({ repo, client, issues }) {
 
 // At most one task per project and at most `maxParallel` projects. A project with a live
 // running task is skipped, so two runs of one project never overlap.
+//
+// An isolated project runs alone: it is chosen only when no other project has a run in flight,
+// and nothing else is chosen beside it, and nothing starts next to an isolated project that is
+// running. A hostile job can only forge handoffs of the run it is in, so a round with one
+// project in it has no one to forge them.
 export async function selectAcrossProjects({ projects, maxParallel, load, now, resume = false }) {
-  const chosen = [];
   const released = [];
-  let more = false;
+  const candidates = [];
+  let busyAny = false;
+  let isolatedBusy = false;
   let failed = 0;
   for (const [position, project] of projects.entries()) {
     // One project's API error must not stop the others.
@@ -70,19 +76,29 @@ export async function selectAcrossProjects({ projects, maxParallel, load, now, r
       : i));
     // A busy project is left alone and does not ask for another round: it would only be
     // found busy again. Its own running round continues its queue.
-    if (busy) continue;
-    const waiting = issues.filter((i) => queued(i, resume)).length;
-    if (chosen.length >= maxParallel) {
-      more ||= waiting > 0;
+    if (busy) {
+      busyAny = true;
+      if (project.isolated === true) isolatedBusy = true;
       continue;
     }
+    const waiting = issues.filter((i) => queued(i, resume)).length;
     const selection = selectNext({ issues, prs: data.prs, defaultBranch: data.defaultBranch, ready: data.ready });
     if (!selection.issue) continue;
     // A task paused by a usage limit keeps its place: nothing runs ahead of it unless the
     // scheduled run is resuming it.
     if (!resume && has(issues.find((i) => i.number === selection.issue.number), 'agent:waiting')) continue;
-    chosen.push({ position, project, selection, defaultBranch: data.defaultBranch, data });
-    more ||= waiting > 1;
+    candidates.push({ position, project, selection, defaultBranch: data.defaultBranch, data, waiting });
   }
-  return { chosen, released, more, failed };
+
+  let chosen;
+  if (isolatedBusy) {
+    chosen = [];
+  } else {
+    const vault = candidates.find((c) => c.project.isolated === true);
+    if (vault) chosen = busyAny ? [] : [vault];
+    else chosen = candidates.slice(0, maxParallel);
+  }
+  const more = candidates.some((c) => !chosen.includes(c) && !(busyAny && c.project.isolated === true))
+    || chosen.some((c) => c.waiting > 1);
+  return { chosen: chosen.map(({ waiting, ...c }) => c), released, more, failed };
 }

@@ -118,3 +118,45 @@ test('closeMergedFor closes only open issues whose merged agent PR names them', 
   assert.deepEqual(result, [5]);
   assert.deepEqual(closed, [['a/b', 5]]);
 });
+
+const alone = (repo) => ({ ...project(repo), isolated: true });
+
+test('an isolated project runs alone in its round; the others wait for the next one', async () => {
+  const table = { 'a/one': data([issue(1, 1, ['agent'])]), 'a/vault': data([issue(2, 1, ['agent'])]), 'a/two': data([issue(3, 1, ['agent'])]) };
+  const r = await selectAcrossProjects({ projects: [project('a/one'), alone('a/vault'), project('a/two')], maxParallel: 3, load: loadFrom(table), now: NOW });
+  assert.deepEqual(r.chosen.map((c) => c.project.repo), ['a/vault']);
+  assert.equal(r.more, true, 'the others are still waiting');
+});
+
+test('without an isolated project with work, the round fills up as before', async () => {
+  const table = { 'a/one': data([issue(1, 1, ['agent'])]), 'a/vault': data([issue(2, 1, ['agent:ready'])]), 'a/two': data([issue(3, 1, ['agent'])]) };
+  const r = await selectAcrossProjects({ projects: [project('a/one'), alone('a/vault'), project('a/two')], maxParallel: 3, load: loadFrom(table), now: NOW });
+  assert.deepEqual(r.chosen.map((c) => c.project.repo), ['a/one', 'a/two']);
+});
+
+test('an isolated project does not start while any other project has a run in flight', async () => {
+  const table = {
+    'a/one': data([issue(1, 1, ['agent:running'], { updatedAt: iso(1000) })]),
+    'a/vault': data([issue(2, 1, ['agent'])]),
+  };
+  const r = await selectAcrossProjects({ projects: [project('a/one'), alone('a/vault')], maxParallel: 3, load: loadFrom(table), now: NOW });
+  assert.deepEqual(r.chosen, []);
+});
+
+test('nothing starts next to an isolated project that has a run in flight', async () => {
+  const table = {
+    'a/vault': data([issue(1, 1, ['agent:running'], { updatedAt: iso(1000) })]),
+    'a/one': data([issue(2, 1, ['agent'])]),
+  };
+  const r = await selectAcrossProjects({ projects: [alone('a/vault'), project('a/one')], maxParallel: 3, load: loadFrom(table), now: NOW });
+  assert.deepEqual(r.chosen, []);
+});
+
+test('a stale running label on another project does not hold an isolated project back', async () => {
+  const table = {
+    'a/one': data([issue(1, 1, ['agent:running'], { updatedAt: iso(STALE_MS + 1) })]),
+    'a/vault': data([issue(2, 1, ['agent'])]),
+  };
+  const r = await selectAcrossProjects({ projects: [project('a/one'), alone('a/vault')], maxParallel: 3, load: loadFrom(table), now: NOW });
+  assert.deepEqual(r.chosen.map((c) => c.project.repo), ['a/vault']);
+});

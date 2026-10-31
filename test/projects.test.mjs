@@ -67,3 +67,11 @@ test('error messages never contain a repository name or any input text (the log 
     assert.throws(() => parseProjects(input), (e) => !/zzsecret|zz bad/.test(e.message));
   }
 });
+
+test('isolated is a boolean that keeps a project alone in its round', () => {
+  const r = parseProjects(text({ projects: [{ repo: 'a/b', isolated: true }, { repo: 'c/d' }, { repo: 'e/f', isolated: false }] }));
+  assert.equal(r.projects[0].isolated, true);
+  assert.equal('isolated' in r.projects[1], false);
+  assert.equal(r.projects[2].isolated, false);
+  for (const bad of ['yes', 1, null]) assert.throws(() => parseProjects(text({ projects: [{ repo: 'a/b', isolated: bad }] })), /isolated/);
+});
