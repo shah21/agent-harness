@@ -18,7 +18,8 @@ permissions:
 
 jobs:
   runner:
-    if: github.event_name == 'schedule' || github.actor == github.repository_owner
+    # `continue` starts the next round with the workflow's own token, whose actor is the Actions bot.
+    if: github.event_name == 'schedule' || github.actor == github.repository_owner || github.actor == 'github-actions[bot]'
     uses: OWNER/agent-harness/.github/workflows/run-shared.yml@v1
     with:
       harness_repo: OWNER/agent-harness

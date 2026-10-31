@@ -67,3 +67,16 @@ test('a file that is not an encrypted run file is refused', async () => {
   writeFileSync(f, Buffer.alloc(100));
   await assert.rejects(() => decryptToDir(f, tmp(), KEY), /not an encrypted run file/);
 });
+
+test('the output is bound to its run and index: a swapped or unbound file is refused (M6)', async () => {
+  const enc = join(tmp(), 'out.enc');
+  await encryptDir(fixture(), enc, KEY, { aad: '777:0' });
+  const ok = tmp();
+  await decryptToDir(enc, ok, KEY, { aad: '777:0' });
+  assert.ok(existsSync(join(ok, 'report.txt')));
+  for (const aad of ['777:1', '778:0', undefined]) {
+    const dest = tmp();
+    await assert.rejects(() => decryptToDir(enc, dest, KEY, { aad }), /decryption failed/);
+    assert.ok(!existsSync(join(dest, 'report.txt')));
+  }
+});

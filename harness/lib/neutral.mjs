@@ -17,3 +17,21 @@ export function lintNeutralNames(text) {
   });
   return bad;
 }
+
+// GitHub prints every step's `env:` values after expanding them. A secret is masked there; a
+// step output, a needs output or a matrix value other than the index is not.
+const ENV_LINE = /^\s+[A-Z][A-Z0-9_]*:\s*(.*)$/;
+const ENV_ALLOWED = /^(?:matrix\.index|strategy\.job-index|secrets\.[A-Z0-9_]+|inputs\.[a-z_]+|github\.(?:token|server_url|repository|run_id|run_number|event_name|event\.repository\.default_branch)|runner\.temp)$/;
+
+export function lintEnvExpressions(text) {
+  const bad = [];
+  String(text).split(/\r?\n/).forEach((line, i) => {
+    const m = ENV_LINE.exec(line);
+    if (!m) return;
+    for (const e of m[1].matchAll(EXPR)) {
+      const expression = e[1].trim();
+      if (!ENV_ALLOWED.test(expression)) bad.push({ line: i + 1, expression });
+    }
+  });
+  return bad;
+}

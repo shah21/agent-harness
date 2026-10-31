@@ -37,7 +37,7 @@ const run = (stub, entryObj, tokens = { alice: ['github_pat_zzfirst', 'ghp_zzsec
     encoding: 'utf8',
     env: { ...process.env, PATH: `${stub.dir}:${process.env.PATH}`, RUNNER_TOKENS: JSON.stringify(tokens) },
   });
-  return { ...r, calls: existsSync(stub.log) ? readFileSync(stub.log, 'utf8') : '' };
+  return { ...r, work, calls: existsSync(stub.log) ? readFileSync(stub.log, 'utf8') : '' };
 };
 
 test('the resolved token goes in a one-command header, never in a URL', () => {
@@ -89,4 +89,12 @@ test('a target without a usable token is not cloned; a missing token fails clean
   const missing = run(stubGit(), entry({ tokenIndex: 7 }));
   assert.equal(missing.status, 1);
   assert.equal(missing.stderr, 'clone failed\n');
+});
+
+test('a target that cannot be cloned is noted for the run, not fatal to the project clone (M5)', () => {
+  const stub = stubGit({ failOn: 'org/code' });
+  const r = run(stub, entry({ target: { repo: 'org/code', path: 'target', ref: '', tokenOwner: 'org', tokenIndex: 0, tokenKind: 'classic' } }));
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(readFileSync(join(r.work, 'target-checkout.txt'), 'utf8'), 'target checkout failed\n');
+  assert.ok(!/zzsecret|ghp_zz/.test(r.stdout.replace(/::add-mask::.*\n/g, '') + r.stderr));
 });

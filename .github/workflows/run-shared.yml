@@ -91,7 +91,7 @@ jobs:
         if: steps.select.outputs.count != '0'
         env:
           RUN_KEY: ${{ secrets.RUN_KEY }}
-        run: node .harness/harness/cli.mjs encrypt --dir "$RUNNER_TEMP/sel" --out "$RUNNER_TEMP/selection.enc"
+        run: node .harness/harness/cli.mjs encrypt --dir "$RUNNER_TEMP/sel" --out "$RUNNER_TEMP/selection.enc" --aad "$GITHUB_RUN_ID"
 
       - name: Upload selection
         if: steps.select.outputs.count != '0'
@@ -138,7 +138,7 @@ jobs:
           RUN_KEY: ${{ secrets.RUN_KEY }}
           INDEX: ${{ matrix.index }}
         run: |
-          node .harness/harness/cli.mjs decrypt --in "$RUNNER_TEMP/enc/selection.enc" --dir "$RUNNER_TEMP/sel"
+          node .harness/harness/cli.mjs decrypt --in "$RUNNER_TEMP/enc/selection.enc" --dir "$RUNNER_TEMP/sel" --aad "$GITHUB_RUN_ID"
           mkdir -p "$RUNNER_TEMP/agent"
           node .harness/harness/cli.mjs shared-entry --selections "$RUNNER_TEMP/sel/selections.json" --index "$INDEX" --out "$RUNNER_TEMP/agent" >> "$GITHUB_OUTPUT"
 
@@ -158,11 +158,13 @@ jobs:
           npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
 
       # Config always comes from the default branch, never a stale stacked base.
+      # Branch names and issue numbers are read from the entry inside the script: an env value
+      # would be printed in the public log.
       - name: Read config from the default branch
         if: steps.entry.outputs.skipped == 'false'
-        env:
-          DEFAULT_BRANCH: ${{ steps.entry.outputs.default }}
-        run: git -C project show "origin/$DEFAULT_BRANCH:agent.config.json" > "$RUNNER_TEMP/agent/default.agent.config.json" 2>/dev/null
+        run: |
+          entry="$RUNNER_TEMP/agent/entry.json"
+          git -C project show "origin/$(jq -r .defaultBranch "$entry"):agent.config.json" > "$RUNNER_TEMP/agent/default.agent.config.json" 2>/dev/null
 
       - name: Note a missing target token
         if: steps.entry.outputs.skipped == 'false'
@@ -179,22 +181,21 @@ jobs:
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           CLAUDE_CODE_OAUTH_TOKEN_2: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_2 }}
-          BASE: ${{ steps.entry.outputs.base }}
         run: >-
           node .harness/harness/run-task.mjs
           --project project
           --issue "$RUNNER_TEMP/agent/issue.json"
           --out "$RUNNER_TEMP/agent"
-          --base-branch "$BASE"
+          --base-branch "$(jq -r .selection.base "$RUNNER_TEMP/agent/entry.json")"
           --config "$RUNNER_TEMP/agent/default.agent.config.json"
           --selection "$RUNNER_TEMP/agent/selection.json" >/dev/null 2>&1
 
       - name: Bundle the agent branch
         if: always() && steps.entry.outputs.skipped == 'false'
-        env:
-          ISSUE: ${{ steps.entry.outputs.issue }}
-          BASE: ${{ steps.entry.outputs.base }}
         run: |
+          entry="$RUNNER_TEMP/agent/entry.json"
+          ISSUE="$(jq -r .selection.issue.number "$entry")"
+          BASE="$(jq -r .selection.base "$entry")"
           branch="agent/issue-$ISSUE"
           rm -f "$RUNNER_TEMP/agent/branch.bundle"
           if git -C project rev-parse -q --verify "refs/heads/$branch" >/dev/null 2>&1 \
@@ -206,9 +207,10 @@ jobs:
         if: always()
         env:
           RUN_KEY: ${{ secrets.RUN_KEY }}
+          INDEX: ${{ matrix.index }}
         run: |
           find "$RUNNER_TEMP/agent" -type l -delete
-          node .harness/harness/cli.mjs encrypt --dir "$RUNNER_TEMP/agent" --out "$RUNNER_TEMP/run-output.enc"
+          node .harness/harness/cli.mjs encrypt --dir "$RUNNER_TEMP/agent" --out "$RUNNER_TEMP/run-output.enc" --aad "$GITHUB_RUN_ID:$INDEX"
 
       - name: Upload run output
         if: always()
@@ -222,7 +224,7 @@ jobs:
   publish:
     name: publish (${{ matrix.index }})
     needs: [select, run]
-    if: always() && needs.select.outputs.count != '0'
+    if: always() && needs.select.result == 'success' && needs.select.outputs.count != '0'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -262,11 +264,11 @@ jobs:
           RUN_KEY: ${{ secrets.RUN_KEY }}
           INDEX: ${{ matrix.index }}
         run: |
-          node .harness/harness/cli.mjs decrypt --in "$RUNNER_TEMP/enc/selection.enc" --dir "$RUNNER_TEMP/sel"
+          node .harness/harness/cli.mjs decrypt --in "$RUNNER_TEMP/enc/selection.enc" --dir "$RUNNER_TEMP/sel" --aad "$GITHUB_RUN_ID"
           mkdir -p "$RUNNER_TEMP/agent"
           node .harness/harness/cli.mjs shared-entry --selections "$RUNNER_TEMP/sel/selections.json" --index "$INDEX" --out "$RUNNER_TEMP/selection-files" >/dev/null
           if [ -f "$RUNNER_TEMP/enc-out/run-output.enc" ]; then
-            node .harness/harness/cli.mjs decrypt --in "$RUNNER_TEMP/enc-out/run-output.enc" --dir "$RUNNER_TEMP/agent" || echo "run output could not be opened"
+            node .harness/harness/cli.mjs decrypt --in "$RUNNER_TEMP/enc-out/run-output.enc" --dir "$RUNNER_TEMP/agent" --aad "$GITHUB_RUN_ID:$INDEX" || echo "run output could not be opened"
           fi
 
       # A matrix reports one combined result, so the verdict comes from this project's own
@@ -318,7 +320,7 @@ jobs:
   continue:
     name: continue
     needs: [select, publish]
-    if: always() && needs.select.outputs.more == 'true'
+    if: always() && needs.select.result == 'success' && needs.select.outputs.more == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

@@ -21,7 +21,7 @@ test('shared-entry writes the entry files and prints only neutral outputs', () =
   const out = join(dir, 'agent');
   const r = run(['shared-entry', '--selections', sel, '--index', '1', '--out', out]);
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(r.stdout, 'skipped=true\nbase=trunk\ndefault=trunk\nissue=8\n');
+  assert.equal(r.stdout, 'skipped=true\n', 'only the flag the workflow needs: step outputs and env values can be printed');
   assert.ok(!/a\/two/.test(r.stdout + r.stderr));
   assert.equal(JSON.parse(readFileSync(join(out, 'entry.json'), 'utf8')).repo, 'a/two');
   assert.equal(JSON.parse(readFileSync(join(out, 'issue.json'), 'utf8')).number, 8);
@@ -55,4 +55,26 @@ test('encrypt and decrypt take the key from RUN_KEY and never print it', () => {
   const missing = run(['encrypt', '--dir', src, '--out', join(holder, 'x.enc')], { RUN_KEY: '' });
   assert.equal(missing.status, 1);
   assert.ok(!existsSync(join(holder, 'd2', 'a.txt')));
+});
+
+test('encrypt and decrypt accept --aad and refuse a mismatch', () => {
+  const src = tmp();
+  writeFileSync(join(src, 'a.txt'), 'hello');
+  const holder = tmp();
+  const enc = join(holder, 'o.enc');
+  const env = { RUN_KEY: 'a-long-enough-test-secret-1234' };
+  assert.equal(run(['encrypt', '--dir', src, '--out', enc, '--aad', '9:1'], env).status, 0);
+  assert.equal(run(['decrypt', '--in', enc, '--dir', join(holder, 'bad'), '--aad', '9:2'], env).status, 1);
+  assert.equal(run(['decrypt', '--in', enc, '--dir', join(holder, 'good'), '--aad', '9:1'], env).status, 0);
+  assert.equal(readFileSync(join(holder, 'good', 'a.txt'), 'utf8'), 'hello');
+});
+
+test('an unexpected failure prints a fixed message, never a path (M8)', () => {
+  const env = { RUN_KEY: 'a-long-enough-test-secret-1234' };
+  const e = run(['encrypt', '--dir', '/nonexistent/zzsecretdir', '--out', join(tmp(), 'o.enc')], env);
+  assert.equal(e.status, 1);
+  assert.equal(e.stderr, 'encryption failed\n');
+  const d = run(['decrypt', '--in', '/nonexistent/zzsecretfile.enc', '--dir', join(tmp(), 'd')], env);
+  assert.equal(d.status, 1);
+  assert.equal(d.stderr, 'decryption failed\n');
 });

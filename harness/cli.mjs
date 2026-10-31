@@ -11,7 +11,7 @@ import { loadConfig } from './lib/config.mjs';
 import { selectReview, buildReviewSelection, checkoutPlan } from './lib/pr-review.mjs';
 import { mergeIssueBody, renderReviewBlocked } from './lib/pr-review-format.mjs';
 import { parseGitmodules } from './lib/target.mjs';
-import { encryptDir, decryptToDir } from './lib/crypt.mjs';
+import { encryptDir, decryptToDir, CryptError } from './lib/crypt.mjs';
 import { parseBlocklist, scanDir, scanText } from './lib/leak.mjs';
 
 const USAGE = `usage:
@@ -37,8 +37,8 @@ const USAGE = `usage:
   cli.mjs render-pr-review --verdict <f> --body <f> --run-url <u>
   cli.mjs render-review-blocked --verdict <f> --run-url <u>
   cli.mjs shared-entry --selections <f> --index <n> --out <dir>
-  cli.mjs encrypt --dir <d> --out <f>        (key in env RUN_KEY)
-  cli.mjs decrypt --in <f> --dir <d>         (key in env RUN_KEY)
+  cli.mjs encrypt --dir <d> --out <f> [--aad <s>]   (key in env RUN_KEY)
+  cli.mjs decrypt --in <f> --dir <d> [--aad <s>]    (key in env RUN_KEY)
   cli.mjs leak-scan --blocklist <f> [--root <d>]... [--file <f>]...`;
 
 const read = (f) => JSON.parse(readFileSync(f, 'utf8'));
@@ -81,7 +81,7 @@ try {
       ready: { type: 'string' }, config: { type: 'string' }, out: { type: 'string' }, 'target-prs': { type: 'string' },
       candidates: { type: 'string' }, repo: { type: 'string' }, project: { type: 'string' }, body: { type: 'string' },
       selections: { type: 'string' }, index: { type: 'string' }, dir: { type: 'string' }, in: { type: 'string' },
-      blocklist: { type: 'string' }, root: { type: 'string', multiple: true }, file: { type: 'string', multiple: true },
+      aad: { type: 'string' }, blocklist: { type: 'string' }, root: { type: 'string', multiple: true }, file: { type: 'string', multiple: true },
     },
   }));
 } catch (e) {
@@ -215,16 +215,18 @@ switch (command) {
     writeFileSync(join(values.out, 'entry.json'), `${JSON.stringify(entry, null, 2)}\n`);
     writeFileSync(join(values.out, 'selection.json'), `${JSON.stringify(entry.selection, null, 2)}\n`);
     writeFileSync(join(values.out, 'issue.json'), `${JSON.stringify(entry.selection.issue, null, 2)}\n`);
-    process.stdout.write(`skipped=${entry.selection.skip ? 'true' : 'false'}\nbase=${entry.selection.base}\ndefault=${entry.defaultBranch}\nissue=${entry.selection.issue.number}\n`);
+    // Step outputs and env values can be printed in a public log: only the flag a step needs.
+    process.stdout.write(`skipped=${entry.selection.skip ? 'true' : 'false'}\n`);
     break;
   }
   case 'encrypt':
   case 'decrypt':
     try {
-      if (command === 'encrypt') await encryptDir(values.dir, values.out, process.env.RUN_KEY);
-      else await decryptToDir(values.in, values.dir, process.env.RUN_KEY);
+      const opts = values.aad === undefined ? {} : { aad: values.aad };
+      if (command === 'encrypt') await encryptDir(values.dir, values.out, process.env.RUN_KEY, opts);
+      else await decryptToDir(values.in, values.dir, process.env.RUN_KEY, opts);
     } catch (e) {
-      console.error(e.message);
+      console.error(e instanceof CryptError ? e.message : `${command === 'encrypt' ? 'encryption' : 'decryption'} failed`);
       process.exit(1);
     }
     break;

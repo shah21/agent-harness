@@ -36,8 +36,11 @@ clone "$repo" "$(token_for "$(jq -r .tokenOwner "$entry")" "$(jq -r .tokenIndex 
 
 t_repo=$(jq -r '.target.repo // empty' "$entry")
 if [ -n "$t_repo" ] && [ -z "$(jq -r '.target.error // empty' "$entry")" ]; then
-  clone "$t_repo" \
+  # The run reports a missing target itself, as it always has: this is not fatal.
+  if ! (clone "$t_repo" \
     "$(token_for "$(jq -r .target.tokenOwner "$entry")" "$(jq -r .target.tokenIndex "$entry")")" \
     "$(jq -r '.target.ref // empty' "$entry")" \
-    "$dest/$(jq -r .target.path "$entry")" yes
+    "$dest/$(jq -r .target.path "$entry")" yes); then
+    echo "target checkout failed" > "$(dirname "$entry")/target-checkout.txt"
+  fi
 fi

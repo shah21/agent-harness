@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { lintNeutralNames } from '../harness/lib/neutral.mjs';
+import { lintNeutralNames, lintEnvExpressions } from '../harness/lib/neutral.mjs';
 
 test('index-only expressions in names and groups pass', () => {
   const y = [
@@ -38,4 +38,23 @@ test('anything that can carry project text is flagged with its line', () => {
 
 test('expressions outside name-like keys are not this lint\'s business', () => {
   assert.deepEqual(lintNeutralNames('env:\n  REPO: ${{ github.repository }}\nrun: echo ${{ github.repository }}'), []);
+});
+
+test('step env values that carry project data are flagged: GitHub prints them (C2)', () => {
+  const y = [
+    '        env:',
+    '          INDEX: ${{ matrix.index }}',
+    '          RUN_KEY: ${{ secrets.RUN_KEY }}',
+    '          PATH_IN: ${{ inputs.projects_path }}',
+    '          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}',
+    '          DEFAULT_BRANCH: ${{ steps.entry.outputs.default }}',
+    '          BASE: ${{ needs.select.outputs.base }}',
+    '          WHO: ${{ matrix.repo }}',
+    '          TITLE: ${{ github.event.issue.title }}',
+    '    outputs:',
+    '      count: ${{ steps.select.outputs.count }}',
+  ].join('\n');
+  assert.deepEqual(lintEnvExpressions(y).map((v) => [v.line, v.expression]), [
+    [6, 'steps.entry.outputs.default'], [7, 'needs.select.outputs.base'], [8, 'matrix.repo'], [9, 'github.event.issue.title'],
+  ]);
 });

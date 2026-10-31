@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { lintNeutralNames } from '../harness/lib/neutral.mjs';
+import { lintNeutralNames, lintEnvExpressions } from '../harness/lib/neutral.mjs';
 
 const root = join(import.meta.dirname, '..');
 const wf = readFileSync(join(root, '.github/workflows/run-shared.yml'), 'utf8');
@@ -15,13 +15,27 @@ test('names, groups and artifact names carry only indices', () => {
   assert.deepEqual(lintNeutralNames(caller), []);
 });
 
+test('no step prints project data through an env value (C2)', () => {
+  assert.deepEqual(lintEnvExpressions(wf), []);
+  assert.deepEqual(lintEnvExpressions(caller), []);
+});
+
+test('every encrypt and decrypt binds the file to its run (and index for run output) (M6)', () => {
+  const lines = wf.split('\n').filter((l) => /cli\.mjs (encrypt|decrypt)/.test(l));
+  assert.equal(lines.length, 5, 'one encrypt in select, decrypt and encrypt in run, two decrypts in publish');
+  for (const l of lines) assert.match(l, /--aad "/, l);
+});
+
 test('the caller can only be started by the schedule or by the owner, and reacts to nothing else', () => {
   assert.match(caller, /^on:\n  workflow_dispatch:\n(?:  #.*\n)*  schedule:/m);
   assert.ok(!/^\s+(issues|pull_request|pull_request_target|issue_comment|push):/m.test(caller));
-  assert.match(caller, /github\.event_name == 'schedule' \|\| github\.actor == github\.repository_owner/);
+  // The next round is started by the workflow's own token, whose actor is the Actions bot.
+  assert.match(caller, /github\.event_name == 'schedule' \|\| github\.actor == github\.repository_owner \|\| github\.actor == 'github-actions\[bot\]'/);
 });
 
-test('the agent step never sees the tokens, the key or the store (secrets stay out of its environment)', () => {
+// Step-scoped env keeps a secret out of other steps' environment variables. It does not keep it
+// out of the job's memory: see the shared-runner spec, "What project code in the run job can reach".
+test('the agent step is not given the tokens, the key or the store', () => {
   const agent = steps.filter((s) => /run-task\.mjs/.test(s));
   assert.equal(agent.length, 1);
   assert.ok(!/RUNNER_TOKENS|RUN_KEY|STORE_/.test(agent[0]));
@@ -54,6 +68,13 @@ test('the clone script keeps the token out of URLs, config and the log, and sile
   const gitLines = clone.split('\n').filter((l) => /^\s*git /.test(l) || /\bgit -c /.test(l));
   assert.ok(gitLines.length >= 4);
   for (const l of gitLines) assert.match(l, /2>\/dev\/null/, l);
+});
+
+test('publish and continue only run after a select that succeeded (M1)', () => {
+  const publish = wf.slice(wf.indexOf('\n  publish:'), wf.indexOf('\n  continue:'));
+  assert.match(publish, /if: always\(\) && needs\.select\.result == 'success' && needs\.select\.outputs\.count != '0'/);
+  const job = wf.slice(wf.indexOf('\n  continue:'));
+  assert.match(job, /needs\.select\.result == 'success'/);
 });
 
 test('the continue job needs only the right to start a workflow', () => {

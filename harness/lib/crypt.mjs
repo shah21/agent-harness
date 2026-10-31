@@ -17,34 +17,40 @@ const IV = 12;
 const TAG = 16;
 const HEADER = MAGIC.length + SALT + IV;
 
+// Only these messages are safe to print where logs are public; anything else (an fs error
+// carries a path) is replaced by a fixed message at the command line.
+export class CryptError extends Error {}
+
 const key = (secret, salt) => scryptSync(secret, salt, 32);
 
 function requireSecret(secret) {
-  if (typeof secret !== 'string' || secret.length < 16) throw new Error('encryption key missing or too short (16+ characters)');
+  if (typeof secret !== 'string' || secret.length < 16) throw new CryptError('encryption key missing or too short (16+ characters)');
 }
 
 function assertNoSymlinks(dir) {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name);
     const st = lstatSync(p);
-    if (st.isSymbolicLink()) throw new Error('refusing to archive a symbolic link');
+    if (st.isSymbolicLink()) throw new CryptError('refusing to archive a symbolic link');
     if (st.isDirectory()) assertNoSymlinks(p);
   }
 }
 
 const exited = (child, message) => new Promise((resolveP, reject) => {
   child.on('error', reject);
-  child.on('close', (code) => (code === 0 ? resolveP() : reject(new Error(message))));
+  child.on('close', (code) => (code === 0 ? resolveP() : reject(new CryptError(message))));
 });
 
-export async function encryptDir(dir, outFile, secret) {
+// `aad` binds the file to its run and index, so a file cannot be swapped for another one.
+export async function encryptDir(dir, outFile, secret, { aad } = {}) {
   requireSecret(secret);
   const root = resolve(dir);
-  if (resolve(outFile).startsWith(root + sep)) throw new Error('the output file must not be inside the directory it archives');
+  if (resolve(outFile).startsWith(root + sep)) throw new CryptError('the output file must not be inside the directory it archives');
   assertNoSymlinks(root);
   const salt = randomBytes(SALT);
   const iv = randomBytes(IV);
   const cipher = createCipheriv('aes-256-gcm', key(secret, salt), iv);
+  if (aad !== undefined) cipher.setAAD(Buffer.from(String(aad)));
   writeFileSync(outFile, Buffer.concat([MAGIC, salt, iv]));
   const tar = spawn('tar', ['-cf', '-', '-C', root, '.'], { stdio: ['ignore', 'pipe', 'ignore'] });
   await Promise.all([
@@ -54,10 +60,10 @@ export async function encryptDir(dir, outFile, secret) {
   appendFileSync(outFile, cipher.getAuthTag());
 }
 
-export async function decryptToDir(inFile, dir, secret) {
+export async function decryptToDir(inFile, dir, secret, { aad } = {}) {
   requireSecret(secret);
   const size = statSync(inFile).size;
-  if (size <= HEADER + TAG) throw new Error('not an encrypted run file');
+  if (size <= HEADER + TAG) throw new CryptError('not an encrypted run file');
   const head = Buffer.alloc(HEADER);
   const tag = Buffer.alloc(TAG);
   const fd = openSync(inFile, 'r');
@@ -67,16 +73,17 @@ export async function decryptToDir(inFile, dir, secret) {
   } finally {
     closeSync(fd);
   }
-  if (!head.subarray(0, MAGIC.length).equals(MAGIC)) throw new Error('not an encrypted run file');
+  if (!head.subarray(0, MAGIC.length).equals(MAGIC)) throw new CryptError('not an encrypted run file');
   const decipher = createDecipheriv('aes-256-gcm', key(secret, head.subarray(MAGIC.length, MAGIC.length + SALT)), head.subarray(MAGIC.length + SALT));
   decipher.setAuthTag(tag);
+  if (aad !== undefined) decipher.setAAD(Buffer.from(String(aad)));
   const scratch = mkdtempSync(join(tmpdir(), 'ahe-'));
   const archive = join(scratch, 'archive.tar');
   try {
     try {
       await pipeline(createReadStream(inFile, { start: HEADER, end: size - TAG - 1 }), decipher, createWriteStream(archive));
     } catch {
-      throw new Error('decryption failed (wrong key or damaged file)');
+      throw new CryptError('decryption failed (wrong key or damaged file)');
     }
     mkdirSync(dir, { recursive: true });
     await exited(spawn('tar', ['-xf', archive, '-C', dir, '--no-same-owner'], { stdio: 'ignore' }), 'unpacking failed');
