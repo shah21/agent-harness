@@ -11,7 +11,9 @@ import { loadConfig } from './lib/config.mjs';
 import { selectReview, buildReviewSelection, checkoutPlan } from './lib/pr-review.mjs';
 import { mergeIssueBody, renderReviewBlocked } from './lib/pr-review-format.mjs';
 import { parseGitmodules } from './lib/target.mjs';
-import { encryptDir, decryptToDir, CryptError } from './lib/crypt.mjs';
+import {
+  encryptDir, decryptToDir, sealDir, openSealed, generateKeypair, tagFor, CryptError,
+} from './lib/crypt.mjs';
 import { parseBlocklist, scanDir, scanText } from './lib/leak.mjs';
 
 const USAGE = `usage:
@@ -39,7 +41,11 @@ const USAGE = `usage:
   cli.mjs shared-entry --selections <f> --index <n> --out <dir>
   cli.mjs encrypt --dir <d> --out <f> [--aad <s>]   (key in env RUN_KEY)
   cli.mjs decrypt --in <f> --dir <d> [--aad <s>]    (key in env RUN_KEY)
-  cli.mjs leak-scan --blocklist <f> [--root <d>]... [--file <f>]...`;
+  cli.mjs leak-scan --blocklist <f> [--root <d>]... [--file <f>]...
+  cli.mjs keygen --out <dir>                  (writes public.key and private.key)
+  cli.mjs seal --dir <d> --out <f> [--key-file <f>] [--aad <s>] [--allow-links]   (key in env SEAL_PUBLIC_KEY)
+  cli.mjs open --in <f> --dir <d> [--key-file <f>] [--aad <s>] [--allow-links]    (key in env OPEN_PRIVATE_KEY)
+  cli.mjs tag --run-id <id> --label <l>       (secret in env SLOT_KEY)`;
 
 const read = (f) => JSON.parse(readFileSync(f, 'utf8'));
 const print = (obj) => process.stdout.write(`${JSON.stringify(obj, null, 2)}\n`);
@@ -81,6 +87,7 @@ try {
       ready: { type: 'string' }, config: { type: 'string' }, out: { type: 'string' }, 'target-prs': { type: 'string' },
       candidates: { type: 'string' }, repo: { type: 'string' }, project: { type: 'string' }, body: { type: 'string' },
       selections: { type: 'string' }, index: { type: 'string' }, dir: { type: 'string' }, in: { type: 'string' },
+      'key-file': { type: 'string' }, 'allow-links': { type: 'boolean' }, label: { type: 'string' }, 'run-id': { type: 'string' },
       aad: { type: 'string' }, blocklist: { type: 'string' }, root: { type: 'string', multiple: true }, file: { type: 'string', multiple: true },
     },
   }));
@@ -227,6 +234,36 @@ switch (command) {
       else await decryptToDir(values.in, values.dir, process.env.RUN_KEY, opts);
     } catch (e) {
       console.error(e instanceof CryptError ? e.message : `${command === 'encrypt' ? 'encryption' : 'decryption'} failed`);
+      process.exit(1);
+    }
+    break;
+  case 'keygen': {
+    const { publicKey, privateKey } = generateKeypair();
+    mkdirSync(values.out, { recursive: true });
+    writeFileSync(join(values.out, 'public.key'), `${publicKey}\n`);
+    writeFileSync(join(values.out, 'private.key'), `${privateKey}\n`, { mode: 0o600 });
+    break;
+  }
+  case 'seal':
+  case 'open':
+    try {
+      const sealing = command === 'seal';
+      const fromEnv = process.env[sealing ? 'SEAL_PUBLIC_KEY' : 'OPEN_PRIVATE_KEY'];
+      const key = values['key-file'] ? readFileSync(values['key-file'], 'utf8').trim() : fromEnv;
+      if (!key) throw new CryptError(`${sealing ? 'public' : 'private'} key missing`);
+      const opts = { allowLinks: values['allow-links'] === true, ...(values.aad === undefined ? {} : { aad: values.aad }) };
+      if (sealing) await sealDir(values.dir, values.out, key, opts);
+      else await openSealed(values.in, values.dir, key, opts);
+    } catch (e) {
+      console.error(e instanceof CryptError ? e.message : `${command === 'seal' ? 'encryption' : 'decryption'} failed`);
+      process.exit(1);
+    }
+    break;
+  case 'tag':
+    try {
+      process.stdout.write(`${tagFor(process.env.SLOT_KEY, values['run-id'], values.label)}\n`);
+    } catch (e) {
+      console.error(e instanceof CryptError ? e.message : 'tag failed');
       process.exit(1);
     }
     break;
