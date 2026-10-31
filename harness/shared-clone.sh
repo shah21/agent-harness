@@ -9,6 +9,8 @@
 #     are public.
 #   - The project is cloned without submodules. The target's submodules are initialised one by
 #     one, at every depth, and only if every submodule it lists is on the owner's allow-list.
+#     Git reads .gitmodules (submodule-plan) and is asked again which URLs it registered
+#     (submodule-verify), so the allow-list applies to what git will really fetch.
 set -Eeuo pipefail
 entry="${1:?entry.json}"
 dest="${2:?destination}"
@@ -27,7 +29,10 @@ init_submodules() {
   paths="$(node "$CLI" submodule-plan --entry "$entry" --gitmodules "$dir/.gitmodules" 2>/dev/null)" || fail
   while IFS= read -r path; do
     [ -n "$path" ] || continue
-    git -c "http.https://github.com/.extraheader=$header" -C "$dir" submodule update -q --init -- "$path" 2>/dev/null || fail
+    # Register the URL (no network), ask git which URLs it registered, and only then fetch.
+    git -C "$dir" submodule init -q -- "$path" 2>/dev/null || fail
+    node "$CLI" submodule-verify --entry "$entry" --repo-dir "$dir" 2>/dev/null || fail
+    git -c "http.https://github.com/.extraheader=$header" -C "$dir" submodule update -q -- "$path" 2>/dev/null || fail
     init_submodules "$dir/$path" "$header" $((depth + 1))
   done <<<"$paths"
 }

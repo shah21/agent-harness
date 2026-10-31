@@ -17,6 +17,7 @@ import {
 import { parseBlocklist, scanDir, scanText } from './lib/leak.mjs';
 import { guardVerdict } from './lib/verdict-guard.mjs';
 import { renderSharedWorkflow } from './lib/shared-workflow.mjs';
+import { planSubmodules, verifyRegisteredSubmodules } from './lib/submodules.mjs';
 
 const USAGE = `usage:
   cli.mjs select --issues <f> --prs <f> --default-branch <b> [--ready <f>]
@@ -46,6 +47,7 @@ const USAGE = `usage:
   cli.mjs leak-scan --blocklist <f> [--root <d>]... [--file <f>]...
   cli.mjs guard-verdict --verdict <f> --entry <f> --bundle-dir <d>
   cli.mjs submodule-plan --entry <f> --gitmodules <f>
+  cli.mjs submodule-verify --entry <f> --repo-dir <dir>
   cli.mjs gen-shared-workflow --out <f>       (writes .github/workflows/run-shared.yml)
   cli.mjs keygen --out <dir>                  (writes public.key and private.key)
   cli.mjs seal --dir <d> --out <f> [--key-file <f>] [--aad <s>] [--allow-links]   (key in env SEAL_PUBLIC_KEY)
@@ -92,7 +94,7 @@ try {
       ready: { type: 'string' }, config: { type: 'string' }, out: { type: 'string' }, 'target-prs': { type: 'string' },
       candidates: { type: 'string' }, repo: { type: 'string' }, project: { type: 'string' }, body: { type: 'string' },
       selections: { type: 'string' }, index: { type: 'string' }, dir: { type: 'string' }, in: { type: 'string' },
-      gitmodules: { type: 'string' }, entry: { type: 'string' }, 'bundle-dir': { type: 'string' }, 'key-file': { type: 'string' }, 'allow-links': { type: 'boolean' }, label: { type: 'string' }, 'run-id': { type: 'string' },
+      'repo-dir': { type: 'string' }, gitmodules: { type: 'string' }, entry: { type: 'string' }, 'bundle-dir': { type: 'string' }, 'key-file': { type: 'string' }, 'allow-links': { type: 'boolean' }, label: { type: 'string' }, 'run-id': { type: 'string' },
       aad: { type: 'string' }, blocklist: { type: 'string' }, root: { type: 'string', multiple: true }, file: { type: 'string', multiple: true },
     },
   }));
@@ -245,19 +247,23 @@ switch (command) {
   case 'gen-shared-workflow':
     writeFileSync(values.out, renderSharedWorkflow());
     break;
-  case 'submodule-plan': {
-    // Lists the submodule paths to initialise, but only if every one is on the owner's allow-list.
+  case 'submodule-plan':
+  case 'submodule-verify':
+    // Lists the submodule paths to initialise, or checks the URLs git registered, against the
+    // owner's allow-list. Git does the reading, so the two cannot disagree.
     try {
-      const allowed = new Set((read(values.entry).target?.allow ?? []).map((r) => r.toLowerCase()));
-      const subs = parseGitmodules(readFileSync(values.gitmodules, 'utf8'));
-      if (subs.some((x) => !allowed.has(x.repo.toLowerCase()))) throw new Error('not allowed');
-      for (const x of subs) process.stdout.write(`${x.path}\n`);
+      const allow = read(values.entry).target?.allow ?? [];
+      if (command === 'submodule-plan') {
+        const paths = planSubmodules(values.gitmodules, allow);
+        for (const x of paths) process.stdout.write(`${x}\n`);
+      } else {
+        verifyRegisteredSubmodules(values['repo-dir'], allow);
+      }
     } catch {
       console.error('submodule not allowed');
       process.exit(1);
     }
     break;
-  }
   case 'guard-verdict': {
     let text;
     try {

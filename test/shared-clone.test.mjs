@@ -11,11 +11,13 @@ const tmp = () => mkdtempSync(join(tmpdir(), 'clone-'));
 // A git stand-in: records its arguments, creates what a clone or submodule update would create
 // (a directory, and a .gitmodules when told to) and, when told to fail, behaves like real git by
 // printing the repository URL to stderr.
+const REAL_GIT = spawnSync('bash', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
 function stubGit({ failOn, gitmodules, nested } = {}) {
   const dir = tmp();
   const log = join(dir, 'calls.log');
   const envLog = join(dir, 'env.log');
   writeFileSync(join(dir, 'git'), `#!/usr/bin/env bash
+REAL_GIT="${REAL_GIT}"
 printf '%s\\n' "$*" >> "${log}"
 printf '%s\\n' "ALLOW=$GIT_ALLOW_PROTOCOL PROMPT=$GIT_TERMINAL_PROMPT" >> "${envLog}"
 if [ -n "${failOn ?? ''}" ] && [[ "$*" == *"${failOn ?? ''}"* ]]; then
@@ -23,6 +25,8 @@ if [ -n "${failOn ?? ''}" ] && [[ "$*" == *"${failOn ?? ''}"* ]]; then
   exit 128
 fi
 case " $* " in
+  *" config "*) exec "${REAL_GIT}" "$@" ;;
+  *" submodule init "*) exit 0 ;;
   *" clone "*)
     dest="\${@: -1}"
     mkdir -p "$dest"
@@ -89,17 +93,22 @@ test('a failing git leaks neither the repository nor the token: only a fixed mes
 const SUB_A = '[submodule "a"]\n\tpath = frontend/ee\n\turl = https://github.com/org/sub-a.git\n';
 const target = (extra = {}) => ({ repo: 'org/code', path: 'target', ref: 'agent/issue-2', tokenOwner: 'org', tokenIndex: 0, tokenKind: 'classic', allow: ['org/sub-a'], branchTemplate: '{type}/{slug}', branchPrefixes: [], ...extra });
 
+// The stub also records the `config` calls the real checks make; those are not what is measured.
+const gitCalls = (r) => r.calls.trim().split('\n').filter((l) => !/ config /.test(` ${l} `));
+
 test('a target is cloned with its own token at its ref, and only allowed submodules are initialised', () => {
   const stub = stubGit({ gitmodules: SUB_A });
   const r = run(stub, entry({ target: target() }));
   assert.equal(r.status, 0, r.stderr);
-  const lines = r.calls.trim().split('\n');
-  assert.equal(lines.length, 5, 'project: clone + checkout; target: clone + checkout + one submodule');
+  const lines = gitCalls(r);
+  assert.equal(lines.length, 6, 'project: clone + checkout; target: clone + checkout + init + update of one submodule');
   const orgB64 = Buffer.from('x-access-token:ghp_zzorgtoken').toString('base64');
-  for (const l of lines.slice(2)) assert.ok(l.includes(orgB64), l);
+  for (const l of [lines[2], lines[3], lines[5]]) assert.ok(l.includes(orgB64), l);
   assert.ok(lines[2].includes('https://github.com/org/code.git'));
   assert.ok(lines[3].endsWith('checkout -q agent/issue-2'));
-  assert.ok(lines[4].endsWith('submodule update -q --init -- frontend/ee'));
+  assert.ok(lines[4].endsWith('submodule init -q -- frontend/ee'));
+  assert.ok(!lines[4].includes('extraheader'), 'registering a URL needs no token');
+  assert.ok(lines[5].endsWith('submodule update -q -- frontend/ee'));
 });
 
 test('a submodule that is not allowed removes the target checkout and notes it, initialising nothing (confused deputy)', () => {
@@ -121,7 +130,7 @@ test('a nested submodule is checked at every depth', () => {
   const nestedOk = '[submodule "n"]\n\tpath = deeper\n\turl = https://github.com/org/sub-a.git\n';
   const ok = run(stubGit({ gitmodules: SUB_A, nested: nestedOk }), entry({ target: target() }));
   assert.ok(!existsSync(join(ok.work, 'target-checkout.txt')));
-  assert.ok(ok.calls.includes('-- deeper'));
+  assert.ok(ok.calls.includes('submodule update -q -- deeper'));
 });
 
 test('git is limited to https and never prompts', () => {
