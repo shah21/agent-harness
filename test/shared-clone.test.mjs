@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, readFileSync, chmodSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, chmodSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -30,6 +30,7 @@ case " $* " in
   *" clone "*)
     dest="\${@: -1}"
     mkdir -p "$dest"
+    if [ -n "\${STUB_LINK_TO:-}" ] && [[ "$dest" != */target ]]; then ln -s "$STUB_LINK_TO" "$dest/target"; fi
     if [[ "$dest" == */target ]]; then printf '%s' '${(gitmodules ?? '').replaceAll("'", "'\''")}' > "$dest/.gitmodules"; fi
     ;;
   *" submodule update "*)
@@ -50,13 +51,13 @@ const entry = (extra = {}) => ({
   repo: 'zzsecret/name', tokenOwner: 'alice', tokenIndex: 1,
   selection: { base: 'agent/issue-3' }, target: null, ...extra,
 });
-const run = (stub, entryObj, tokens = { alice: ['github_pat_zzfirst', 'ghp_zzsecondtoken'], org: ['ghp_zzorgtoken'] }) => {
+const run = (stub, entryObj, tokens = { alice: ['github_pat_zzfirst', 'ghp_zzsecondtoken'], org: ['ghp_zzorgtoken'] }, extraEnv = {}) => {
   const work = tmp();
   const entryFile = join(work, 'entry.json');
   writeFileSync(entryFile, JSON.stringify(entryObj));
   const r = spawnSync('bash', [SCRIPT, entryFile, join(work, 'project')], {
     encoding: 'utf8',
-    env: { ...process.env, PATH: `${stub.dir}:${process.env.PATH}`, RUNNER_TOKENS: JSON.stringify(tokens) },
+    env: { ...process.env, PATH: `${stub.dir}:${process.env.PATH}`, RUNNER_TOKENS: JSON.stringify(tokens), ...extraEnv },
   });
   return { ...r, work, calls: existsSync(stub.log) ? readFileSync(stub.log, 'utf8') : '' };
 };
@@ -155,4 +156,15 @@ test('a target that cannot be cloned is noted for the run, not fatal to the proj
   assert.equal(r.status, 0, r.stderr);
   assert.equal(readFileSync(join(r.work, 'target-checkout.txt'), 'utf8'), 'target checkout failed\n');
   assert.ok(!/zzsecret|ghp_zz/.test(r.stdout.replace(/::add-mask::.*\n/g, '') + r.stderr));
+});
+
+test('a target path that goes through a link in the project checkout is refused, and nothing outside is touched (review L3)', () => {
+  const outside = tmp();
+  writeFileSync(join(outside, 'canary.txt'), 'must survive');
+  const stub = stubGit({ gitmodules: SUB_A });
+  const r = run(stub, entry({ target: target() }), undefined, { STUB_LINK_TO: outside });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(readFileSync(join(r.work, 'target-checkout.txt'), 'utf8'), 'target checkout failed\n');
+  assert.deepEqual(readdirSync(outside), ['canary.txt'], 'the directory the link points at is untouched');
+  assert.equal(gitCalls(r).length, 2, 'only the project was cloned');
 });

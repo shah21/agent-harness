@@ -183,3 +183,16 @@ test('a missing heading, a missing plan or a plan the API serves as a link give 
   await runSharedSelect({ projectsText: JSON.stringify({ projects: [{ repo: 'alice/one' }] }), tokensText: tokens, outDir: dir2, fetchImpl: link.fetchImpl, now: NOW });
   assert.equal(JSON.parse(readFileSync(join(dir2, 'selections.json'), 'utf8'))[0].taskTitle, null, 'a symbolic link is not content');
 });
+
+test('merge checks stop after a fixed number of pull requests per project (review M2)', async () => {
+  const markers = Array.from({ length: 30 }, (_, i) => `\u2705 **READY_FOR_QA**\n\n${targetsMarker([{ repo: 'org/code', number: 100 + i, branch: 'agent/issue-5', base: 'main', role: 'super' }])}`);
+  const issues = Array.from({ length: 30 }, (_, i) => gi(500 + i, 1, ['agent:ready']));
+  const { fetchImpl, calls } = makeFetch([
+    ...repoHandlers('alice/one', { issues }),
+    ...Array.from({ length: 30 }, (_, i) => ({ method: 'GET', match: new RegExp(`/repos/alice/one/issues/${500 + i}/comments`), reply: { body: [{ body: markers[i] }] } })),
+    { method: 'GET', match: /\/repos\/org\/code$/, reply: { body: { permissions: { pull: true, push: false } } } },
+    { method: 'GET', match: /\/repos\/org\/code\/pulls\/\d+$/, reply: { body: { merged: false } } },
+  ]);
+  await runSharedSelect({ projectsText: JSON.stringify({ projects: [{ repo: 'alice/one', target: { repo: 'org/code' } }] }), tokensText: JSON.stringify({ alice: ['ghp_ok'], org: ['ghp_org'] }), outDir: out(), fetchImpl, now: NOW });
+  assert.equal(calls.filter((c) => /\/pulls\/\d+$/.test(c.url)).length, 20);
+});

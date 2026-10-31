@@ -7,6 +7,9 @@
 // where a braced expansion is unavoidable it is written \${...}.
 export const SLOTS = 3;
 
+// Actions are pinned to the commit a tag pointed at when this was written (2026-10-31), so a moved
+// tag cannot change what the trusted jobs run. Refresh them deliberately.
+
 const HEADER = `name: agent-run-shared
 
 # Runs queued tasks for many private projects from one public runner repository.
@@ -93,14 +96,14 @@ jobs:
       more: [[ steps.select.outputs.more ]]
     steps:
       - name: Checkout harness
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: [[ inputs.harness_repo ]]
           ref: [[ inputs.harness_ref ]]
           path: .harness
           persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: [[ inputs.node_version ]]
 
@@ -122,7 +125,7 @@ jobs:
 
       - name: Upload the selection
         if: steps.select.outputs.count != '0'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: selection-[[ github.run_attempt ]]
           path: [[ runner.temp ]]/selection.enc
@@ -141,19 +144,19 @@ const SLOT = `
       actions: read
     steps:
       - name: Checkout harness
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: [[ inputs.harness_repo ]]
           ref: [[ inputs.harness_ref ]]
           path: .harness
           persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: [[ inputs.node_version ]]
 
       - name: Download the selection
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: selection-[[ github.run_attempt ]]
           path: [[ runner.temp ]]/enc
@@ -206,7 +209,7 @@ const SLOT = `
           node .harness/harness/cli.mjs seal --dir "$RUNNER_TEMP/bundle" --out "$RUNNER_TEMP/bundle.sealed" --key-file "$RUNNER_TEMP/run.key" --aad "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT:@K@" --allow-links
 
       - name: Upload the bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: bundle-[[ steps.names.outputs.bundle ]]
           path: [[ runner.temp ]]/bundle.sealed
@@ -223,14 +226,14 @@ const SLOT = `
       actions: read
     steps:
       - name: Checkout harness
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: [[ inputs.harness_repo ]]
           ref: [[ inputs.harness_ref ]]
           path: .harness
           persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: [[ inputs.node_version ]]
 
@@ -255,7 +258,7 @@ const SLOT = `
           } > "$RUNNER_TEMP/pub.txt"
 
       - name: Publish the public key
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: pub-[[ steps.names.outputs.pub ]]
           path: [[ runner.temp ]]/pub.txt
@@ -355,7 +358,7 @@ const SLOT = `
 
       - name: Upload the sealed output
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: out-[[ steps.names.outputs.out ]]
           path: [[ runner.temp ]]/run-output.sealed
@@ -373,19 +376,19 @@ const SLOT = `
       actions: read
     steps:
       - name: Checkout harness
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: [[ inputs.harness_repo ]]
           ref: [[ inputs.harness_ref ]]
           path: .harness
           persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: [[ inputs.node_version ]]
 
       - name: Download the selection
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: selection-[[ github.run_attempt ]]
           path: [[ runner.temp ]]/enc

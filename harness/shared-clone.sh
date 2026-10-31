@@ -58,9 +58,24 @@ repo=$(jq -r .repo "$entry")
 base=$(jq -r .selection.base "$entry")
 clone "$repo" "$(token_for "$(jq -r .tokenOwner "$entry")" "$(jq -r .tokenIndex "$entry")")" "$base" "$dest" no
 
+# No part of a path inside the checkout may be a link: the project's own files could point it at
+# a place outside, and the clone and the clean-up below would follow it.
+inside_checkout() {
+  local cur="$dest" part
+  local -a parts
+  IFS='/' read -ra parts <<<"$1"
+  for part in "${parts[@]}"; do
+    cur="$cur/$part"
+    [ ! -L "$cur" ] || return 1
+  done
+}
+
 t_repo=$(jq -r '.target.repo // empty' "$entry")
-if [ -n "$t_repo" ] && [ -z "$(jq -r '.target.error // empty' "$entry")" ]; then
-  t_dest="$dest/$(jq -r .target.path "$entry")"
+t_path=$(jq -r '.target.path // empty' "$entry")
+if [ -n "$t_repo" ] && [ -z "$(jq -r '.target.error // empty' "$entry")" ] && ! inside_checkout "$t_path"; then
+  echo "target checkout failed" > "$(dirname "$entry")/target-checkout.txt"
+elif [ -n "$t_repo" ] && [ -z "$(jq -r '.target.error // empty' "$entry")" ]; then
+  t_dest="$dest/$t_path"
   # The run reports a missing target itself, as it always has: this is not fatal. A partly
   # cloned target is removed so the run never sees half of it.
   if ! (clone "$t_repo" \

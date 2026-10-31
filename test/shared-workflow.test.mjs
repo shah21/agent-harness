@@ -218,3 +218,10 @@ test('every handoff is authenticated by content, not only by name: pub, bundle a
     assert.ok(publish.indexOf('proof-check') < publish.indexOf('guard-verdict'), 'verify the output before the guard reads it');
   }
 });
+
+test('every action the trusted jobs run is pinned to a commit, not a tag that can move (review L4)', () => {
+  const uses = [...wf.matchAll(/^\s+(?:- )?uses: (\S+)/gm)].map((m) => m[1]);
+  assert.ok(uses.length >= 4 * 3);
+  for (const u of uses) assert.match(u, /^actions\/[a-z-]+@[0-9a-f]{40}$/, u);
+  assert.equal(new Set(uses).size, 4, 'checkout, setup-node, upload-artifact, download-artifact');
+});

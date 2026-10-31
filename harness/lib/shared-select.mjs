@@ -5,6 +5,9 @@ import { issueToClose } from './merged.mjs';
 // is 3 hours) is a crashed run.
 export const STALE_MS = 4 * 60 * 60 * 1000;
 
+// Calls spent on one project are bounded: it cannot starve the others of the shared API quota.
+export const READY_CAP = 50;
+
 const names = (i) => i.labels.map((l) => l.name);
 const has = (i, name) => names(i).includes(name);
 const queued = (i, resume) => !has(i, 'agent:running') && (has(i, 'agent') || (resume && has(i, 'agent:waiting')));
@@ -23,7 +26,8 @@ export async function loadProject(client, repo) {
     client.fileContent(repo, 'agent.config.json', defaultBranch),
   ]);
   const ready = [];
-  for (const i of issues.filter((x) => has(x, 'agent:ready'))) {
+  const recent = issues.filter((x) => has(x, 'agent:ready')).sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)).slice(0, READY_CAP);
+  for (const i of recent) {
     ready.push({ number: i.number, body: i.body, comments: await client.comments(repo, i.number) });
   }
   return { defaultBranch, issues, prs, ready, configText };

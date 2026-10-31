@@ -18,7 +18,9 @@ The agent and the project's own install and check commands run code the harness 
 - **The untrusted job** (`run`) holds the Claude token, its own slot key and the public half of the publish key. Nothing else.
 - Each of the three slots has its own jobs and its own `SLOT_KEY_<n>`. A slot's `run` makes a key pair in its own VM and publishes the public half. `clone` seals the checkout to that key; `run` opens it, works, and seals its output to the publish key, which it can encrypt with but not decrypt.
 - Artifact names are `pub-`, `bundle-` and `out-` plus an HMAC of the run id under the slot key, so a job of another slot cannot create them first.
-- `publish` never trusts the run's verdict where it reaches git: the issue, branch, base and task come from the trusted selection, and every target repository, branch, bundle and base SHA is checked against it.
+- Every handoff carries a proof under the slot key (an HMAC over the run, attempt, slot and content) that is checked before use, so replacing an artifact after it appears does not work for a job of another slot. Everything is bound to the run attempt.
+- `publish` never trusts the run's verdict where it reaches git: the issue, branch, base, task and title come from the trusted selection, and every target repository, branch, bundle and base SHA is checked against it.
+- A project marked `"isolated": true` in the project list runs alone in its round, and only when nothing else is running. Use it for the most sensitive project.
 - The project list is the only place that decides which repositories a run may clone. A project's own `agent.config.json` and `.gitmodules` can only choose from it.
 
 ## Setup
@@ -30,7 +32,7 @@ The agent and the project's own install and check commands run code the harness 
    {
      "projects": [
        { "repo": "owner/project-a" },
-       { "repo": "owner/project-b", "target": { "repo": "org/code", "allow": ["org/sub-a"] } }
+       { "repo": "owner/project-b", "isolated": true, "target": { "repo": "org/code", "allow": ["org/sub-a"] } }
      ],
      "maxParallel": 3
    }
@@ -78,9 +80,22 @@ Download the artifact `out-<tag>` from the run page. The output is sealed to the
 - A run of a project that might have run hostile code: rotate that slot's `SLOT_KEY_<n>` and the Claude token. The repository tokens were never in the run job.
 - The repository's tokens or `RUN_KEY` leaked some other way: rotate them. They take effect for new runs.
 
+## Verify these on the first dry run
+
+Some of what this relies on is GitHub's behaviour and can only be checked there. Use a scratch public runner repository and scratch private projects first.
+
+1. A job that does not reference a secret does not receive it. Put a canary secret in the workflow's declared secrets, reference it only in one job, and read the runner process memory of another job.
+2. The public run page shows only constant job names and artifact names that are tags.
+3. Which actor a round started by `gh workflow run` with the workflow's own token has (the template admits `github-actions[bot]`).
+4. On a re-run, which artifacts are listed and what `name=` returns.
+5. What the repository API reports as `permissions.push` for a fine-grained token (it may describe the user, not the token).
+6. That a label that does not exist is created by adding it to an issue.
+7. That artifacts of a run can be deleted and re-uploaded by another job of the same run, and that the proofs make that useless.
+8. That scheduled workflows in a public repository are disabled after 60 days without activity, and what re-enables them.
+
 ## Residual risks
 
-- The run job holds the Claude token and its slot key. A compromised run can burn that usage or print the token, and, until the slot key is rotated, could race to forge that slot's artifact names in a later round.
+- The run job holds the Claude token and its slot key. A compromised run can burn that usage or print the token. If it prints the slot key, the thief can forge that slot's handoffs in a later round it is also running in, and nothing detects the theft: rotate slot keys on a schedule, and mark the most sensitive project `isolated`.
 - A compromised run can write a wrong but well-formed verdict for its own project. Its pull request is still reviewed by a person.
 - Run existence, timing, duration and the size of the sealed artifacts are public.
 

@@ -53,7 +53,9 @@ export function githubClient({ token, fetchImpl = fetch }) {
       }));
     },
     async comments(repo, n) {
-      return (await pages(`/repos/${repo}/issues/${n}/comments`)).map((c) => ({ body: c.body ?? '' }));
+      // One page: the READY comment is near the end, and a project must not be able to make the
+      // runner spend an unbounded number of calls on the owner's shared token.
+      return (await pages(`/repos/${repo}/issues/${n}/comments`, 100)).map((c) => ({ body: c.body ?? '' }));
     },
     async prMerged(repo, n) {
       return (await getJson(`/repos/${repo}/pulls/${n}`)).merged === true;

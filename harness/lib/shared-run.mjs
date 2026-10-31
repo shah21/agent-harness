@@ -17,7 +17,7 @@ async function closeMergedTargets({ project, data, client, tokenMap, probe, fetc
   const closed = [];
   if (!project.target) return closed;
   const listed = new Set([project.target.repo, ...project.target.allow]);
-  for (const t of targetsToCheck(data.ready).filter((x) => listed.has(x.repo))) {
+  for (const t of targetsToCheck(data.ready).filter((x) => listed.has(x.repo)).slice(0, 20)) {
     const list = tokenMap[project.target.tokenOwner];
     const r = list ? await resolveToken({ repo: t.repo, tokens: list, needsWrite: false, probe }) : null;
     if (!r) continue;

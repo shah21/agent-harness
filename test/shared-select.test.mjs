@@ -160,3 +160,22 @@ test('a stale running label on another project does not hold an isolated project
   const r = await selectAcrossProjects({ projects: [project('a/one'), alone('a/vault')], maxParallel: 3, load: loadFrom(table), now: NOW });
   assert.deepEqual(r.chosen.map((c) => c.project.repo), ['a/vault']);
 });
+
+test('a project with a great many ready issues costs a bounded number of calls (review M2)', async () => {
+  const ready = Array.from({ length: 80 }, (_, i) => ({
+    number: i + 1, title: `t${i}`, body: `plan: p\ntask: ${i}`, labels: [{ name: 'agent:ready' }], updated_at: new Date(NOW - i * 1000).toISOString(),
+  }));
+  const { fetchImpl, calls } = makeFetch([
+    { method: 'GET', match: /\/repos\/a\/b$/, reply: { body: { default_branch: 'main' } } },
+    { method: 'GET', match: /\/issues\?state=open/, reply: { body: ready } },
+    { method: 'GET', match: /\/pulls\?state=open/, reply: { body: [] } },
+    { method: 'GET', match: /\/issues\/\d+\/comments/, reply: { body: [{ body: 'x' }] } },
+    { method: 'GET', match: /contents\/agent\.config\.json/, reply: { status: 404, body: {} } },
+  ]);
+  const d = await loadProject(githubClient({ token: 't', fetchImpl }), 'a/b');
+  const commentCalls = calls.filter((c) => /\/comments/.test(c.url));
+  assert.equal(d.ready.length, 50, 'only the 50 most recently updated ready issues are read');
+  assert.equal(commentCalls.length, 50, 'one page of comments each');
+  assert.ok(commentCalls.every((c) => /page=1$/.test(c.url)));
+  assert.deepEqual(d.ready.slice(0, 2).map((r) => r.number), [1, 2], 'the most recent first');
+});
