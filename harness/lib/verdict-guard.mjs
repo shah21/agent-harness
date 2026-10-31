@@ -21,7 +21,18 @@ export const REJECTIONS = {
 
 const isString = (v, max = 200_000) => typeof v === 'string' && v.length <= max;
 
-export function guardVerdict({ verdict, entry, bundleDir, fileExists }) {
+// The publisher turns each review round into a file named after its number, so the numbers must be
+// numbers, and there can only be so many of them.
+function validReview(review) {
+  if (review === undefined || review === null) return true;
+  if (typeof review !== 'object' || Array.isArray(review)) return false;
+  const { rounds, open } = review;
+  if (rounds !== undefined && (!Array.isArray(rounds) || rounds.length > 10
+    || rounds.some((r) => !r || typeof r !== 'object' || !Number.isInteger(r.n) || r.n < 1 || r.n > 10))) return false;
+  return open === undefined || Array.isArray(open);
+}
+
+export function guardVerdict({ verdict, entry, bundleDir, isBundle }) {
   const reject = (key) => ({ ok: false, reason: REJECTIONS[key] });
   if (!verdict || typeof verdict !== 'object' || Array.isArray(verdict) || !OUTCOMES.has(verdict.outcome)) return reject('shape');
 
@@ -62,13 +73,18 @@ export function guardVerdict({ verdict, entry, bundleDir, fileExists }) {
     if (t.branch !== expectedBranch || !BRANCH_RE.test(t.branch)) return reject('branch');
     if (t.base !== null && t.base !== undefined && (!BRANCH_RE.test(String(t.base)) || !knownBases.has(t.base))) return reject('branch');
     if (!isString(t.baseSha, 40) || !SHA.test(t.baseSha)) return reject('bundle');
-    if (!isString(t.bundle, 200) || !BUNDLE.test(t.bundle) || !fileExists(join(bundleDir, t.bundle))) return reject('bundle');
+    if (!isString(t.bundle, 200) || !BUNDLE.test(t.bundle) || !isBundle(join(bundleDir, t.bundle))) return reject('bundle');
     if (!isString(t.prTitle) || !isString(t.prBody)) return reject('shape');
     used.push(t);
   }
   if (used.filter((t) => t.role === 'super').length > 1) return reject('shape');
+  if (!validReview(verdict.review)) return reject('shape');
 
   const out = JSON.parse(JSON.stringify(verdict));
   if (Array.isArray(verdict.targets)) out.targets = JSON.parse(JSON.stringify(used));
+  // What reaches a pull request title or a file name comes from the selection, not the run.
+  out.task = sel.task ?? null;
+  out.plan = sel.plan ?? null;
+  if (typeof entry.taskTitle === 'string' && entry.taskTitle !== '') out.taskTitle = entry.taskTitle;
   return { ok: true, verdict: out };
 }

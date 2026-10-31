@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Small commands the reusable workflow calls between gh steps.
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, lstatSync, openSync, readSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { selectNext, selectDebug, targetsToCheck } from './lib/queue.mjs';
@@ -282,7 +282,21 @@ switch (command) {
     } catch {
       parsed = null;
     }
-    const checked = guardVerdict({ verdict: parsed, entry, bundleDir: values['bundle-dir'], fileExists: existsSync });
+    // A bundle is a regular file that starts like a git bundle: not a directory (git would fetch
+    // from the repository inside it) and not a link.
+    const isBundle = (p) => {
+      try {
+        if (!lstatSync(p).isFile()) return false;
+        const fd = openSync(p, 'r');
+        const head = Buffer.alloc(16);
+        readSync(fd, head, 0, 16, 0);
+        closeSync(fd);
+        return /^# v[23] git bundle\n/.test(head.toString('latin1'));
+      } catch {
+        return false;
+      }
+    };
+    const checked = guardVerdict({ verdict: parsed, entry, bundleDir: values['bundle-dir'], isBundle });
     if (checked.ok) print(checked.verdict);
     else print(blockedVerdict(entry.selection, 'harness', checked.reason));
     break;

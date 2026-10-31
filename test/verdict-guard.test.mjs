@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -27,8 +27,8 @@ const target = (extra = {}) => ({
   repo: 'org/code', role: 'super', commits: 1, branch: 'feat/add-the-thing', base: 'release/1', baseSha: SHA,
   bundle: 'org__code.bundle', prTitle: 'Task 3: feat: add the thing', prBody: 'body', ...extra,
 });
-const exists = () => true;
-const guard = (v, e = entry(), over = {}) => guardVerdict({ verdict: v, entry: e, bundleDir: '/b', fileExists: exists, ...over });
+const isBundle = () => true;
+const guard = (v, e = entry(), over = {}) => guardVerdict({ verdict: v, entry: e, bundleDir: '/b', isBundle, ...over });
 
 test('a genuine verdict passes through unchanged', () => {
   const v = verdict();
@@ -94,7 +94,7 @@ test('bundle names must be plain files that exist, and the base sha must be a fu
     assert.equal(r.ok, false, bundle);
     assert.equal(r.reason, 'the run output named an unsafe bundle');
   }
-  assert.equal(guard(verdict({ targets: [target()] }), withTarget(), { fileExists: () => false }).ok, false);
+  assert.equal(guard(verdict({ targets: [target()] }), withTarget(), { isBundle: () => false }).ok, false);
   for (const baseSha of ['main', 'abc', 'a'.repeat(39), `${'a'.repeat(40)}\n--force`, '--upload-pack=x']) {
     assert.equal(guard(verdict({ targets: [target({ baseSha })] }), withTarget()).ok, false, baseSha);
   }
@@ -133,4 +133,42 @@ test('the CLI prints the verdict when it passes and a BLOCKED one when it does n
   assert.equal(blocked.kind, 'harness');
   assert.ok(!/zzsecret|"main"/.test(bad.stdout.replace('"baseBranch": "main"', '')), 'nothing from the rejected verdict survives');
   assert.equal(spawnSync('node', [cli, 'guard-verdict', '--verdict', join(dir, 'nope.json'), '--entry', join(dir, 'entry.json'), '--bundle-dir', dir], { encoding: 'utf8' }).status, 1);
+});
+
+test('review data is typed: it is rendered into file names by the publisher (review M3)', () => {
+  const ok = verdict({ review: { rounds: [{ n: 1 }, { n: 2 }], open: [] } });
+  assert.equal(guard(ok).ok, true);
+  for (const review of ['x', 5, [], { rounds: 'x' }, { rounds: [{ n: '1' }] }, { rounds: [{ n: 0 }] }, { rounds: [{ n: 11 }] },
+    { rounds: [{ n: 1.5 }] }, { rounds: [{ n: '/../../../x' }] }, { rounds: [null] }, { rounds: Array.from({ length: 11 }, (_, i) => ({ n: i + 1 })) }, { rounds: [], open: 'x' }]) {
+    assert.equal(guard(verdict({ review })).ok, false, JSON.stringify(review));
+  }
+  assert.equal(guard(verdict({ review: null })).ok, true);
+});
+
+test('the task, plan and title that reach the pull request come from the trusted entry, not the run (review L2)', () => {
+  const r = guard(verdict({ task: null, plan: null, taskTitle: 'x\n--injected' }), entry());
+  assert.equal(r.ok, true);
+  assert.equal(r.verdict.task, 3);
+  assert.equal(r.verdict.plan, 'docs/p.md');
+  assert.equal(r.verdict.taskTitle, 'feat: add the thing');
+  const noTitle = guard(verdict({ taskTitle: 'from the run' }), entry({ taskTitle: null }));
+  assert.equal(noTitle.verdict.taskTitle, 'from the run', 'without a trusted title the run\'s own is left, as text');
+});
+
+test('a bundle must be a regular git bundle file: a directory, a link or a file without the header is refused (review L1)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bundles-'));
+  mkdirSync(join(dir, 'dir.bundle'));
+  writeFileSync(join(dir, 'real.bundle'), '# v2 git bundle\nrest');
+  writeFileSync(join(dir, 'v3.bundle'), '# v3 git bundle\nrest');
+  writeFileSync(join(dir, 'fake.bundle'), 'not a bundle at all');
+  symlinkSync(join(dir, 'real.bundle'), join(dir, 'link.bundle'));
+  const cli = join(import.meta.dirname, '..', 'harness', 'cli.mjs');
+  writeFileSync(join(dir, 'entry.json'), JSON.stringify(withTarget()));
+  const check = (bundle) => {
+    writeFileSync(join(dir, 'v.json'), JSON.stringify(verdict({ targets: [target({ bundle })] })));
+    return JSON.parse(spawnSync('node', [cli, 'guard-verdict', '--verdict', join(dir, 'v.json'), '--entry', join(dir, 'entry.json'), '--bundle-dir', dir], { encoding: 'utf8' }).stdout).outcome;
+  };
+  assert.equal(check('real.bundle'), 'READY_FOR_QA');
+  assert.equal(check('v3.bundle'), 'READY_FOR_QA');
+  for (const b of ['dir.bundle', 'fake.bundle', 'link.bundle', 'missing.bundle']) assert.equal(check(b), 'BLOCKED', b);
 });
