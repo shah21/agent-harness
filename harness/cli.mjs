@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Small commands the reusable workflow calls between gh steps.
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, lstatSync, openSync, readSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { selectNext, selectDebug, targetsToCheck } from './lib/queue.mjs';
@@ -11,6 +11,14 @@ import { loadConfig } from './lib/config.mjs';
 import { selectReview, buildReviewSelection, checkoutPlan } from './lib/pr-review.mjs';
 import { mergeIssueBody, renderReviewBlocked } from './lib/pr-review-format.mjs';
 import { parseGitmodules } from './lib/target.mjs';
+import {
+  encryptDir, decryptToDir, sealDir, openSealed, generateKeypair, tagFor, proofFor, verifyProof, CryptError,
+} from './lib/crypt.mjs';
+import { createHash } from 'node:crypto';
+import { parseBlocklist, scanDir, scanText } from './lib/leak.mjs';
+import { guardVerdict } from './lib/verdict-guard.mjs';
+import { renderSharedWorkflow } from './lib/shared-workflow.mjs';
+import { planSubmodules, verifyRegisteredSubmodules } from './lib/submodules.mjs';
 
 const USAGE = `usage:
   cli.mjs select --issues <f> --prs <f> --default-branch <b> [--ready <f>]
@@ -33,7 +41,21 @@ const USAGE = `usage:
   cli.mjs review-skip-verdict --selection <f>
   cli.mjs review-fallback-verdict --selection <f>
   cli.mjs render-pr-review --verdict <f> --body <f> --run-url <u>
-  cli.mjs render-review-blocked --verdict <f> --run-url <u>`;
+  cli.mjs render-review-blocked --verdict <f> --run-url <u>
+  cli.mjs shared-entry --selections <f> --index <n> --out <dir>
+  cli.mjs encrypt --dir <d> --out <f> [--aad <s>]   (key in env RUN_KEY)
+  cli.mjs decrypt --in <f> --dir <d> [--aad <s>]    (key in env RUN_KEY)
+  cli.mjs leak-scan --blocklist <f> [--root <d>]... [--file <f>]...
+  cli.mjs guard-verdict --verdict <f> --entry <f> --bundle-dir <d>
+  cli.mjs submodule-plan --entry <f> --gitmodules <f>
+  cli.mjs submodule-verify --entry <f> --repo-dir <dir>
+  cli.mjs gen-shared-workflow --out <f>       (writes .github/workflows/run-shared.yml)
+  cli.mjs keygen --out <dir>                  (writes public.key and private.key)
+  cli.mjs seal --dir <d> --out <f> [--key-file <f>] [--aad <s>] [--allow-links]   (key in env SEAL_PUBLIC_KEY)
+  cli.mjs open --in <f> --dir <d> [--key-file <f>] [--aad <s>] [--allow-links]    (key in env OPEN_PRIVATE_KEY)
+  cli.mjs tag --run-id <id> --label <l>       (secret in env SLOT_KEY)
+  cli.mjs proof --run-id <id> --slot <n> --label <l> [--data-file <f>]        (secret in env SLOT_KEY)
+  cli.mjs proof-check --run-id <id> --slot <n> --label <l> [--data-file <f>] --proof-file <f>`;
 
 const read = (f) => JSON.parse(readFileSync(f, 'utf8'));
 const print = (obj) => process.stdout.write(`${JSON.stringify(obj, null, 2)}\n`);
@@ -74,6 +96,9 @@ try {
       'run-url': { type: 'string' }, 'pr-url': { type: 'string' },
       ready: { type: 'string' }, config: { type: 'string' }, out: { type: 'string' }, 'target-prs': { type: 'string' },
       candidates: { type: 'string' }, repo: { type: 'string' }, project: { type: 'string' }, body: { type: 'string' },
+      selections: { type: 'string' }, index: { type: 'string' }, dir: { type: 'string' }, in: { type: 'string' },
+      slot: { type: 'string' }, 'data-file': { type: 'string' }, 'proof-file': { type: 'string' }, 'repo-dir': { type: 'string' }, gitmodules: { type: 'string' }, entry: { type: 'string' }, 'bundle-dir': { type: 'string' }, 'key-file': { type: 'string' }, 'allow-links': { type: 'boolean' }, label: { type: 'string' }, 'run-id': { type: 'string' },
+      aad: { type: 'string' }, blocklist: { type: 'string' }, root: { type: 'string', multiple: true }, file: { type: 'string', multiple: true },
     },
   }));
 } catch (e) {
@@ -197,6 +222,140 @@ switch (command) {
   case 'render-review-blocked':
     process.stdout.write(renderReviewBlocked(read(values.verdict), { runUrl: values['run-url'] }));
     break;
+  case 'shared-entry': {
+    const entry = read(values.selections)[Number(values.index)];
+    if (!entry) {
+      console.error('no such selection');
+      process.exit(1);
+    }
+    mkdirSync(values.out, { recursive: true });
+    writeFileSync(join(values.out, 'entry.json'), `${JSON.stringify(entry, null, 2)}\n`);
+    writeFileSync(join(values.out, 'selection.json'), `${JSON.stringify(entry.selection, null, 2)}\n`);
+    writeFileSync(join(values.out, 'issue.json'), `${JSON.stringify(entry.selection.issue, null, 2)}\n`);
+    // Step outputs and env values can be printed in a public log: only the flag a step needs.
+    process.stdout.write(`skipped=${entry.selection.skip ? 'true' : 'false'}\n`);
+    break;
+  }
+  case 'encrypt':
+  case 'decrypt':
+    try {
+      const opts = values.aad === undefined ? {} : { aad: values.aad };
+      if (command === 'encrypt') await encryptDir(values.dir, values.out, process.env.RUN_KEY, opts);
+      else await decryptToDir(values.in, values.dir, process.env.RUN_KEY, opts);
+    } catch (e) {
+      console.error(e instanceof CryptError ? e.message : `${command === 'encrypt' ? 'encryption' : 'decryption'} failed`);
+      process.exit(1);
+    }
+    break;
+  case 'gen-shared-workflow':
+    writeFileSync(values.out, renderSharedWorkflow());
+    break;
+  case 'submodule-plan':
+  case 'submodule-verify':
+    // Lists the submodule paths to initialise, or checks the URLs git registered, against the
+    // owner's allow-list. Git does the reading, so the two cannot disagree.
+    try {
+      const allow = read(values.entry).target?.allow ?? [];
+      if (command === 'submodule-plan') {
+        const paths = planSubmodules(values.gitmodules, allow);
+        for (const x of paths) process.stdout.write(`${x}\n`);
+      } else {
+        verifyRegisteredSubmodules(values['repo-dir'], allow);
+      }
+    } catch {
+      console.error('submodule not allowed');
+      process.exit(1);
+    }
+    break;
+  case 'guard-verdict': {
+    let text;
+    try {
+      text = readFileSync(values.verdict, 'utf8');
+    } catch {
+      console.error('no verdict to check');
+      process.exit(1);
+    }
+    const entry = read(values.entry);
+    let parsed;
+    try {
+      parsed = text.length > 5_000_000 ? null : JSON.parse(text);
+    } catch {
+      parsed = null;
+    }
+    // A bundle is a regular file that starts like a git bundle: not a directory (git would fetch
+    // from the repository inside it) and not a link.
+    const isBundle = (p) => {
+      try {
+        if (!lstatSync(p).isFile()) return false;
+        const fd = openSync(p, 'r');
+        const head = Buffer.alloc(16);
+        readSync(fd, head, 0, 16, 0);
+        closeSync(fd);
+        return /^# v[23] git bundle\n/.test(head.toString('latin1'));
+      } catch {
+        return false;
+      }
+    };
+    const checked = guardVerdict({ verdict: parsed, entry, bundleDir: values['bundle-dir'], isBundle });
+    if (checked.ok) print(checked.verdict);
+    else print(blockedVerdict(entry.selection, 'harness', checked.reason));
+    break;
+  }
+  case 'keygen': {
+    const { publicKey, privateKey } = generateKeypair();
+    mkdirSync(values.out, { recursive: true });
+    writeFileSync(join(values.out, 'public.key'), `${publicKey}\n`);
+    writeFileSync(join(values.out, 'private.key'), `${privateKey}\n`, { mode: 0o600 });
+    break;
+  }
+  case 'seal':
+  case 'open':
+    try {
+      const sealing = command === 'seal';
+      const fromEnv = process.env[sealing ? 'SEAL_PUBLIC_KEY' : 'OPEN_PRIVATE_KEY'];
+      const key = values['key-file'] ? readFileSync(values['key-file'], 'utf8').trim() : fromEnv;
+      if (!key) throw new CryptError(`${sealing ? 'public' : 'private'} key missing`);
+      const opts = { allowLinks: values['allow-links'] === true, ...(values.aad === undefined ? {} : { aad: values.aad }) };
+      if (sealing) await sealDir(values.dir, values.out, key, opts);
+      else await openSealed(values.in, values.dir, key, opts);
+    } catch (e) {
+      console.error(e instanceof CryptError ? e.message : `${command === 'seal' ? 'encryption' : 'decryption'} failed`);
+      process.exit(1);
+    }
+    break;
+  case 'proof':
+  case 'proof-check':
+    try {
+      const data = values['data-file'] ? createHash('sha256').update(readFileSync(values['data-file'])).digest('hex') : 'none';
+      const parts = [values['run-id'], values.slot, values.label, data];
+      if (command === 'proof') {
+        process.stdout.write(`${proofFor(process.env.SLOT_KEY, ...parts)}\n`);
+      } else if (!verifyProof(process.env.SLOT_KEY, readFileSync(values['proof-file'], 'utf8').trim(), ...parts)) {
+        process.exit(1);
+      }
+    } catch (e) {
+      console.error(e instanceof CryptError ? e.message : 'proof failed');
+      process.exit(1);
+    }
+    break;
+  case 'tag':
+    try {
+      process.stdout.write(`${tagFor(process.env.SLOT_KEY, values['run-id'], values.label)}\n`);
+    } catch (e) {
+      console.error(e instanceof CryptError ? e.message : 'tag failed');
+      process.exit(1);
+    }
+    break;
+  case 'leak-scan': {
+    const terms = parseBlocklist(readFileSync(values.blocklist, 'utf8'));
+    const hits = [
+      ...(values.root ?? []).flatMap((r) => scanDir(r, terms)),
+      ...(values.file ?? []).flatMap((f) => scanText(f, readFileSync(f, 'utf8'), terms)),
+    ];
+    for (const h of hits) process.stdout.write(`${h.path}:${h.line}\n`);
+    if (hits.length > 0) process.exit(1);
+    break;
+  }
   default:
     console.error(USAGE);
     process.exit(2);
