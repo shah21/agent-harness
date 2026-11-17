@@ -72,7 +72,7 @@ on:
 jobs:
   select:
     name: select
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -124,7 +124,7 @@ jobs:
     name: clone 0
     needs: select
     if: needs.select.result == 'success' && fromJSON(needs.select.outputs.count) > 0
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
       contents: read
@@ -212,7 +212,7 @@ jobs:
     name: run 0
     needs: select
     if: needs.select.result == 'success' && fromJSON(needs.select.outputs.count) > 0
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 180
     permissions:
       contents: read
@@ -368,7 +368,7 @@ jobs:
     name: publish 0
     needs: [select, clone_0, run_0]
     if: always() && needs.select.result == 'success' && fromJSON(needs.select.outputs.count) > 0
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -478,7 +478,7 @@ jobs:
     name: clone 1
     needs: select
     if: needs.select.result == 'success' && fromJSON(needs.select.outputs.count) > 1
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
       contents: read
@@ -566,7 +566,7 @@ jobs:
     name: run 1
     needs: select
     if: needs.select.result == 'success' && fromJSON(needs.select.outputs.count) > 1
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 180
     permissions:
       contents: read
@@ -722,7 +722,7 @@ jobs:
     name: publish 1
     needs: [select, clone_1, run_1]
     if: always() && needs.select.result == 'success' && fromJSON(needs.select.outputs.count) > 1
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -832,7 +832,7 @@ jobs:
     name: clone 2
     needs: select
     if: needs.select.result == 'success' && fromJSON(needs.select.outputs.count) > 2
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
       contents: read
@@ -920,7 +920,7 @@ jobs:
     name: run 2
     needs: select
     if: needs.select.result == 'success' && fromJSON(needs.select.outputs.count) > 2
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 180
     permissions:
       contents: read
@@ -1076,7 +1076,7 @@ jobs:
     name: publish 2
     needs: [select, clone_2, run_2]
     if: always() && needs.select.result == 'success' && fromJSON(needs.select.outputs.count) > 2
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -1186,7 +1186,7 @@ jobs:
     name: continue
     needs: [select, publish_0, publish_1, publish_2]
     if: always() && needs.select.result == 'success' && needs.select.outputs.more == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       actions: write
