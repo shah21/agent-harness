@@ -84,7 +84,7 @@ on:
 jobs:
   select:
     name: select
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -138,7 +138,7 @@ const SLOT = `
     name: clone @K@
     needs: select
     if: needs.select.result == 'success' && fromJSON(needs.select.outputs.count) > @K@
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
       contents: read
@@ -226,7 +226,7 @@ const SLOT = `
     name: run @K@
     needs: select
     if: needs.select.result == 'success' && fromJSON(needs.select.outputs.count) > @K@
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 180
     permissions:
       contents: read
@@ -382,7 +382,7 @@ const SLOT = `
     name: publish @K@
     needs: [select, clone_@K@, run_@K@]
     if: always() && needs.select.result == 'success' && fromJSON(needs.select.outputs.count) > @K@
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -494,7 +494,7 @@ const CONTINUE = `
     name: continue
     needs: [select, publish_0, publish_1, publish_2]
     if: always() && needs.select.result == 'success' && needs.select.outputs.more == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       actions: write

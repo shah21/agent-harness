@@ -40,7 +40,7 @@ on:
 
 jobs:
   select:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -128,7 +128,7 @@ jobs:
   run:
     needs: select
     if: needs.select.outputs.issue != '' && needs.select.outputs.skipped == 'false'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 150
     permissions:
       contents: read
@@ -244,7 +244,7 @@ jobs:
   publish:
     needs: [select, run]
     if: always() && needs.select.outputs.issue != ''
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: write
