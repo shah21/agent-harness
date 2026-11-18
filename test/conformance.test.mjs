@@ -137,3 +137,14 @@ test('files in a noted Test line count as planned and are compared', () => {
   assert.deepEqual(c.identical, ['test/a.test.ts']);
   assert.deepEqual(c.differs, ['e2e/a.spec.ts']);
 });
+
+test('with a target, plan paths without its directory match changed files with it', () => {
+  const t = parsePlanTask(PLAN_NOTES, 1);
+  const diff = [{ status: 'A', path: 'app/src/a.ts' }, { status: 'A', path: 'app/test/a.test.ts' }, { status: 'A', path: 'app/e2e/a.spec.ts' }];
+  const content = { 'app/test/a.test.ts': 'test(1);\n', 'app/e2e/a.spec.ts': 'test(2);\n' };
+  const c = comparePlan(t, diff, (p) => content[p] ?? null, 'app');
+  assert.deepEqual(c.missing, []);
+  assert.deepEqual(c.unexpected, []);
+  assert.equal(c.touchedPlanned, 3);
+  assert.deepEqual(c.identical, ['e2e/a.spec.ts', 'test/a.test.ts']);
+});

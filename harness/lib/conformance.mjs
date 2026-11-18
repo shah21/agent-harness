@@ -1,6 +1,8 @@
 // How closely a change follows its plan task: which planned files changed,
 // which have code in the plan that the file matches exactly, and which files
 // the plan does not mention. Advisory only: it produces warnings, never a block.
+import { targetRelative } from './target.mjs';
+
 const MANIFESTS = new Set(['package.json', 'pnpm-lock.yaml', 'package-lock.json', 'yarn.lock']);
 const FILE_LINE = /^[-*]\s+(Create|Modify|Delete|Test)(?:\s*\([^)\n]*\))?:\s*(.+)$/gm;
 const CODE_BLOCK = /(?:Create|Replace)[^\n`]*`([^`\n]+)`[^\n]*:(?:\*\*)?\n\n```[\w-]*\n([\s\S]*?)\n```/g;
@@ -27,20 +29,24 @@ export function parsePlanTask(planText, task) {
 }
 
 // diff: [{ status, path, oldPath? }] as produced by parseDiff; readFile(path) returns
-// the file's content in the change, or null when it cannot be read.
-export function comparePlan(planTask, diff, readFile) {
+// the file's content in the change, or null when it cannot be read. With a target, paths
+// compare relative to the target repository, so plans may name target files with or without its directory.
+export function comparePlan(planTask, diff, readFile, targetPath = null) {
   if (!planTask || planTask.files.length === 0) return null;
-  const planned = new Set(planTask.files.map((f) => f.path));
-  const touched = new Set(diff.flatMap((d) => (d.oldPath ? [d.oldPath, d.path] : [d.path])));
+  const rel = (p) => targetRelative(p, targetPath);
+  const planned = new Set(planTask.files.map((f) => rel(f.path)));
+  const original = new Map(diff.flatMap((d) => (d.oldPath ? [d.oldPath, d.path] : [d.path])).map((p) => [rel(p), p]));
+  const touched = new Set(original.keys());
 
   const unexpected = [...touched].filter((p) => !planned.has(p) && !MANIFESTS.has(p.split('/').pop())).sort();
   const missing = [...planned].filter((p) => !touched.has(p)).sort();
 
   const identical = [];
   const differs = [];
-  for (const [path, code] of planTask.blocks) {
+  for (const [planPath, code] of planTask.blocks) {
+    const path = rel(planPath);
     if (!touched.has(path)) continue;
-    const actual = readFile(path);
+    const actual = readFile(original.get(path));
     if (actual === null || actual === undefined) continue;
     (actual.trim() === code.trim() ? identical : differs).push(path);
   }

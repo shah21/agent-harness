@@ -3,6 +3,14 @@ export const BRANCH_RE = /^[a-z0-9][a-z0-9._/-]{0,99}$/;
 export const RELATED_TOKEN = '<!-- agent-related -->';
 export const TEMPLATE_VARS = ['issue', 'task', 'taskTitle', 'summary', 'changedFiles', 'checks', 'related', 'review'];
 
+// A path relative to the target repository: drops the target's directory when present. Plans and
+// reviewers may name target files either way; compare on this form. No target: unchanged.
+export function targetRelative(path, targetPath) {
+  if (!targetPath) return path;
+  const prefix = targetPath.endsWith('/') ? targetPath : `${targetPath}/`;
+  return path.startsWith(prefix) ? path.slice(prefix.length) : path;
+}
+
 const TYPES = ['feat', 'fix', 'chore', 'refactor', 'test', 'docs', 'perf'];
 const TYPE_RE = new RegExp(`^(${TYPES.join('|')}):\\s*(.+)$`);
 
