@@ -359,7 +359,7 @@ async function execute({ projectDir, issue, outDir, logsDir, reportPath, configP
       return null;
     }
   };
-  const conformance = diff.length ? comparePlan(parsePlanTask(planText, ref.task), diff, readAtHead) : null;
+  const conformance = diff.length ? comparePlan(parsePlanTask(planText, ref.task), diff, readAtHead, config.target?.path) : null;
   let targetFields = {};
   if (target) {
     const ready = decision.outcome === 'READY_FOR_QA';

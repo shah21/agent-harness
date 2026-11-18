@@ -64,7 +64,7 @@ export function createSession({ envConfig, accounts, env, projectDir, outDir, lo
 }
 
 // One review and its verify pass: a fresh session tries to refute each high and medium finding.
-export async function reviewStep({ n, repos, session, model, templates, input, env, outDir, warnings }) {
+export async function reviewStep({ n, repos, session, model, templates, input, env, outDir, warnings, targetPath = null }) {
   const paths = changedPaths(repos);
   const reviewPath = join(outDir, `review-${n}.md`);
   const snaps = snapshot(repos.map((r) => r.dir));
@@ -78,7 +78,7 @@ export async function reviewStep({ n, repos, session, model, templates, input, e
   if (enforceReadOnly(snaps).length) warnings.push(`review round ${n}: the reviewer changed the checkout; changes were discarded`);
   if (review.limited) return { limited: true };
   if (review.timedOut) return { timedOut: true };
-  const parsed = parseReviewOutput(review.text, paths, changedHunks(repos));
+  const parsed = parseReviewOutput(review.text, paths, changedHunks(repos), targetPath);
   if (!parsed.ok) return { error: parsed.error };
 
   let findings = parsed.findings;
@@ -134,6 +134,7 @@ export async function runReviewLoop({
       const reviewStart = Date.now();
       const step = await reviewStep({
         n, repos, session, model: rc.model, templates, input: { goal, skillDir, planTask, rules, history: historyText(rounds) }, env, outDir, warnings,
+        targetPath: config.target?.path,
       });
       if (step.limited) { exit = 'usage-limit'; break; }
       if (step.timedOut) { exit = 'budget'; break; }

@@ -1,4 +1,6 @@
 // Pure decisions of the review loop: what the reviewer and the fixer said, and what happens next.
+import { targetRelative } from './target.mjs';
+
 export const SEVERITIES = ['high', 'medium', 'low'];
 const ID = /^R\d+$/;
 const RULE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -10,7 +12,7 @@ const fail = (error) => ({ ok: false, error });
 export const actionable = (findings) => findings.filter((f) => f.severity !== 'low' && f.verification !== 'WITHDRAWN');
 export const fingerprint = (f) => `${f.file}#${f.rule}`;
 
-function checkFinding(f, at, seen, inDiff, hunks) {
+function checkFinding(f, at, seen, file, hunks) {
   if (!f || typeof f !== 'object' || Array.isArray(f)) return `${at} must be an object`;
   if (typeof f.id !== 'string' || !ID.test(f.id)) return `${at}: "id" must look like R1`;
   if (seen.has(f.id)) return `${at}: duplicate id ${f.id}`;
@@ -20,15 +22,16 @@ function checkFinding(f, at, seen, inDiff, hunks) {
   if (typeof f.rule !== 'string' || !RULE.test(f.rule)) return `${f.id}: "rule" must be a kebab-case slug`;
   if (typeof f.problem !== 'string' || !f.problem.trim()) return `${f.id}: "problem" must be a non-empty string`;
   if (f.fix !== undefined && typeof f.fix !== 'string') return `${f.id}: "fix" must be a string`;
-  if (f.severity !== 'low' && !inDiff.has(f.file)) return `${f.id}: "${f.file}" is not in the diff`;
+  if (f.severity !== 'low' && !file) return `${f.id}: "${f.file}" is not in the diff`;
   if (hunks && f.severity !== 'low') {
     if (!Number.isInteger(f.line)) return `${f.id}: "line" is required for high and medium findings`;
-    if (!(hunks.get(f.file) ?? []).some(([a, b]) => f.line >= a && f.line <= b)) return `${f.id}: line ${f.line} of "${f.file}" is not in a changed hunk`;
+    if (!(hunks.get(file) ?? []).some(([a, b]) => f.line >= a && f.line <= b)) return `${f.id}: line ${f.line} of "${f.file}" is not in a changed hunk`;
   }
   return null;
 }
 
-export function parseReviewOutput(text, diffPaths, hunks = null) {
+// A finding may name a target file with or without the target's directory; it is kept in the diff's form.
+export function parseReviewOutput(text, diffPaths, hunks = null, targetPath = null) {
   const m = FENCE.exec(String(text ?? ''));
   if (!m) return fail('no ```json block in the review');
   let raw;
@@ -42,13 +45,16 @@ export function parseReviewOutput(text, diffPaths, hunks = null) {
   const list = raw.findings ?? [];
   if (!Array.isArray(list)) return fail('"findings" must be an array');
   const inDiff = new Set(diffPaths);
+  const byTarget = new Map(diffPaths.map((p) => [targetRelative(p, targetPath), p]));
+  const resolve = (file) => (inDiff.has(file) ? file : byTarget.get(targetRelative(file, targetPath)) ?? null);
   const seen = new Set();
   const findings = [];
   for (const [i, f] of list.entries()) {
-    const error = checkFinding(f, `finding ${i + 1}`, seen, inDiff, hunks);
+    const file = typeof f?.file === 'string' ? resolve(f.file) : null;
+    const error = checkFinding(f, `finding ${i + 1}`, seen, file, hunks);
     if (error) return fail(error);
     seen.add(f.id);
-    findings.push({ id: f.id, severity: f.severity, file: f.file, line: f.line ?? null, rule: f.rule, problem: f.problem.trim(), fix: (f.fix ?? '').trim() });
+    findings.push({ id: f.id, severity: f.severity, file: file ?? f.file, line: f.line ?? null, rule: f.rule, problem: f.problem.trim(), fix: (f.fix ?? '').trim() });
   }
   if (raw.status === 'CLEAN' && actionable(findings).length) return fail('status is CLEAN but high or medium findings are listed');
   return { ok: true, status: raw.status, findings };

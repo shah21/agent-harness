@@ -59,6 +59,17 @@ test('invalid output is rejected with a reason', () => {
   }
 });
 
+test('with a target, a finding path without its directory resolves to the diff path; neither form is rejected', () => {
+  const diff = ['notes.md', 'app/src/x.ts'];
+  const hunks = new Map([['app/src/x.ts', [[1, 5]]]]);
+  const ok = parseReviewOutput(fence({ status: 'FINDINGS', findings: [f('R1', 'high', 'src/x.ts'), f('R2', 'medium', 'app/src/x.ts')] }), diff, hunks, 'app');
+  assert.equal(ok.ok, true);
+  assert.deepEqual(ok.findings.map((x) => x.file), ['app/src/x.ts', 'app/src/x.ts']);
+  assert.deepEqual(parseReviewOutput(fence({ status: 'FINDINGS', findings: [f('R1', 'high', 'src/y.ts')] }), diff, hunks, 'app'),
+    { ok: false, error: 'R1: "src/y.ts" is not in the diff' });
+  assert.equal(parseReviewOutput(fence({ status: 'FINDINGS', findings: [f('R1', 'high', 'src/x.ts')] }), diff, hunks).ok, false);
+});
+
 test('actionable keeps high and medium; fingerprint ignores the line', () => {
   assert.deepEqual(actionable([f('R1', 'high'), f('R2', 'low'), f('R3', 'medium')]).map((x) => x.id), ['R1', 'R3']);
   assert.equal(fingerprint({ ...f('R1', 'high'), line: 99 }), fingerprint(f('R7', 'medium')));

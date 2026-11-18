@@ -149,7 +149,7 @@ async function execute({ projectDir, outDir, logsDir, configPath: configOverride
   const step = await reviewStep({
     n: 1, repos, session, model: rc.model, templates: reviewTemplates(),
     input: { goal: planText ? planGoal(planText) : '', skillDir, planTask, rules: readRules(known, rc.rules), history: '(first review)' },
-    env, outDir, warnings,
+    env, outDir, warnings, targetPath: config.target?.path,
   });
   enforceReadOnly(state.snaps);
 
